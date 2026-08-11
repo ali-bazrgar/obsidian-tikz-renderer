@@ -12,7 +12,7 @@ import { augmentPreamble } from "./tex-package-detector";
 import { TeXDependencyResolver } from "./tex-dependency-resolver";
 
 const execFileAsync = promisify(execFile);
-const PIPELINE_VERSION = "14-texlive-block-resolver-pdf";
+const PIPELINE_VERSION = "15-texlive-block-resolver-pdf-mutool-svg";
 const MAX_OUTPUT = 4 * 1024 * 1024;
 const MAX_DEPENDENCY_RETRIES = 3;
 
@@ -106,9 +106,13 @@ export class RenderService {
     const output = path.join(work, "main.svg");
     if (outputType === "pdf") {
       const mutool = settings.mutoolPath.trim() || "mutool";
-      await this.run(mutool, ["draw", "-q", "-o", output, input, "1"], work, settings.compileTimeout);
+      // MuPDF does not reliably infer SVG output from the .svg filename alone.
+      // Explicitly select SVG so PDF-based engines (pdflatex/xelatex/lualatex)
+      // always produce the artifact expected by the renderer.
+      await this.run(mutool, ["draw", "-q", "-F", "svg", "-o", output, input, "1"], work, settings.compileTimeout);
     } else {
-      await this.run(settings.dvisvgmPath, ["-n", input, "-o", output], work, settings.compileTimeout);
+      const dvisvgm = settings.dvisvgmPath.trim() || "dvisvgm";
+      await this.run(dvisvgm, ["-n", input, "-o", output], work, settings.compileTimeout);
     }
     if (!await this.exists(output)) throw new RenderError("The vector converter completed without producing an SVG file.");
     return sanitizeSvg(await fs.readFile(output, "utf8"));
