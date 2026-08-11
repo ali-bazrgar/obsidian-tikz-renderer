@@ -20,18 +20,21 @@ export class TikzRendererView {
 
   render(): void {
     this.host.empty();
-    const doc = this.host.ownerDocument;
     const root = this.host.createDiv({ cls: "tikz-renderer" });
     root.dataset.theme = this.detectTheme();
 
-    // Controls deliberately live outside the paper/figure surface. They must
-    // never cover, clip, or participate in the SVG's layout.
+    // The control layer is a sibling of the paper, never a child of the SVG
+    // surface. This keeps menus independent from the figure's dimensions.
     const controls = root.createDiv({ cls: "tikz-renderer-controls" });
     const menu = controls.createEl("button", {
       cls: "tikz-renderer-menu",
       attr: { "aria-label": "TikZ controls", "aria-expanded": "false", type: "button" },
     });
     setIcon(menu, "more-horizontal");
+
+    const panel = root.createDiv({ cls: "tikz-renderer-panel" });
+    panel.hidden = true;
+    panel.setAttribute("role", "menu");
 
     const paper = root.createDiv({ cls: "tikz-renderer-paper" });
     const viewport = paper.createDiv({ cls: "tikz-renderer-viewport" });
@@ -67,39 +70,18 @@ export class TikzRendererView {
       apply();
     };
 
-    const panel = doc.createDiv({ cls: "tikz-renderer-panel" });
-    panel.hidden = true;
-    panel.setAttribute("role", "menu");
-    doc.body.appendChild(panel);
-
-    const positionPanel = (): void => {
-      const rect = menu.getBoundingClientRect();
-      const panelRect = panel.getBoundingClientRect();
-      const gap = 6;
-      let left = rect.left;
-      let top = rect.bottom + gap;
-      if (left + panelRect.width > doc.documentElement.clientWidth - 8) left = Math.max(8, doc.documentElement.clientWidth - panelRect.width - 8);
-      if (top + panelRect.height > doc.documentElement.clientHeight - 8) top = Math.max(8, rect.top - panelRect.height - gap);
-      panel.style.left = `${left}px`;
-      panel.style.top = `${top}px`;
-    };
-
     const closePanel = (): void => {
       panel.hidden = true;
       menu.setAttribute("aria-expanded", "false");
     };
-    const togglePanel = (): void => {
-      panel.hidden = !panel.hidden;
-      menu.setAttribute("aria-expanded", `${!panel.hidden}`);
-      if (!panel.hidden) {
-        positionPanel();
-        panel.querySelector<HTMLButtonElement>("button")?.focus();
-      }
-    };
-
     menu.addEventListener("click", (event) => {
       event.stopPropagation();
-      togglePanel();
+      panel.hidden = !panel.hidden;
+      menu.setAttribute("aria-expanded", `${!panel.hidden}`);
+    });
+    root.addEventListener("click", (event) => {
+      if (panel.hidden || panel.contains(event.target as Node) || menu.contains(event.target as Node)) return;
+      closePanel();
     });
 
     const button = (label: string, action: () => void | Promise<void>): void => {
@@ -131,13 +113,7 @@ export class TikzRendererView {
     button("Export SVG", async () => { try { await this.exportService.saveSvg(this.result.svg, this.result.hash); } catch (error) { new Notice(error instanceof Error ? error.message : String(error), 8000); } });
     button("Export PNG", async () => { try { await this.exportService.savePng(this.result.svg, this.result.hash); } catch (error) { new Notice(error instanceof Error ? error.message : String(error), 8000); } });
 
-    const onDocumentPointerDown = (event: PointerEvent): void => {
-      if (panel.hidden || panel.contains(event.target as Node) || menu.contains(event.target as Node)) return;
-      closePanel();
-    };
-    doc.addEventListener("pointerdown", onDocumentPointerDown, true);
-
-    const onViewportPointerDown = (event: PointerEvent): void => {
+    viewport.addEventListener("pointerdown", (event) => {
       if (event.button !== 0) return;
       dragging = true;
       lastX = event.clientX;
@@ -145,8 +121,8 @@ export class TikzRendererView {
       viewport.classList.add("is-dragging");
       viewport.setPointerCapture(event.pointerId);
       event.preventDefault();
-    };
-    const onViewportPointerMove = (event: PointerEvent): void => {
+    });
+    viewport.addEventListener("pointermove", (event) => {
       if (!dragging) return;
       x += event.clientX - lastX;
       y += event.clientY - lastY;
@@ -154,23 +130,19 @@ export class TikzRendererView {
       lastY = event.clientY;
       apply();
       event.preventDefault();
-    };
+    });
     const stopDragging = (): void => {
       dragging = false;
       viewport.classList.remove("is-dragging");
     };
-
-    viewport.addEventListener("pointerdown", onViewportPointerDown);
-    viewport.addEventListener("pointermove", onViewportPointerMove);
     viewport.addEventListener("pointerup", stopDragging);
     viewport.addEventListener("pointercancel", stopDragging);
     viewport.addEventListener("lostpointercapture", stopDragging);
 
-    // Wheel zoom is intentionally local to the figure. Once zoomed, drag/pan
-    // works with the same pointer gesture and does not depend on the menu.
+    // Smooth wheel zoom around the cursor. This makes panning useful only when
+    // the diagram is actually enlarged while keeping small diagrams natural.
     viewport.addEventListener("wheel", (event) => {
-      const factor = event.deltaY < 0 ? 1.12 : 1 / 1.12;
-      const nextZoom = clampZoom(zoom * factor);
+      const nextZoom = clampZoom(zoom * (event.deltaY < 0 ? 1.12 : 1 / 1.12));
       if (nextZoom === zoom) return;
       const rect = viewport.getBoundingClientRect();
       const px = event.clientX - (rect.left + rect.width / 2);
@@ -182,20 +154,6 @@ export class TikzRendererView {
       apply();
       event.preventDefault();
     }, { passive: false });
-
-    const onResize = (): void => { if (!panel.hidden) positionPanel(); };
-    doc.defaultView?.addEventListener("resize", onResize);
-    doc.defaultView?.addEventListener("scroll", onResize, true);
-
-    const cleanup = (): void => {
-      doc.removeEventListener("pointerdown", onDocumentPointerDown, true);
-      doc.defaultView?.removeEventListener("resize", onResize);
-      doc.defaultView?.removeEventListener("scroll", onResize, true);
-      panel.remove();
-    };
-    root.addEventListener("DOMNodeRemoved", (event) => {
-      if (event.target === root) cleanup();
-    }, { once: true });
 
     img.addEventListener("load", () => { fit(); }, { once: true });
     apply();
@@ -229,7 +187,6 @@ export class TikzRendererView {
 class TikzSourceModal extends Modal {
   constructor(app: App, private readonly initialSource: string, private readonly onRender: (source: string) => Promise<void>) { super(app); }
   onOpen(): void {
-    // Keep the editor visually quiet: the source itself is the UI.
     this.titleEl.empty();
     this.contentEl.empty();
     const editor = this.contentEl.createEl("textarea", { cls: "tikz-source-editor" });
