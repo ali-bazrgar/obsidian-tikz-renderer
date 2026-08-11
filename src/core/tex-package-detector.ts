@@ -11,49 +11,49 @@ const PACKAGE_BY_PATTERN: Array<[RegExp, string]> = [
   [/\\multirow\b/u, "multirow"],
   [/\\tabularx\b/u, "tabularx"],
   [/\\begin\{longtable\}/u, "longtable"],
-  [/\\setlist\b|\\begin\{description\}/u, "enumitem"],
+  [/\\setlist\b/u, "enumitem"],
   [/\\begin\{tikzcd\}/u, "tikz-cd"],
   [/\\smartdiagram\b/u, "smartdiagram"],
   [/\\pie\b|\\wheel\b/u, "pgf-pie"],
   [/\\gantt(?:bar|group|newline|link)\b/u, "pgfgantt"],
+  [/\\begin\{(?:circuitikz)\}/u, "circuitikz"],
+  [/\\begin\{forest\}|\\forestset\b/u, "forest"],
 ];
 
+// These patterns are intentionally conservative. The goal is to load a
+// library when source syntax strongly indicates that it is required, rather
+// than loading a large collection of libraries for every TikZ picture.
 const LIBRARY_BY_PATTERN: Array<[RegExp, string]> = [
   [/\b(?:Stealth|Latex|Triangle|Computer Modern Rightarrow)\b/u, "arrows.meta"],
   [/\b(?:automata|state|accepting|initial by arrow)\b/u, "automata"],
-  [/\b(?:backgrounds|on background layer)\b/u, "backgrounds"],
-  [/\b(?:chainin|start chain|continue chain|join chain)\b/u, "chains"],
-  [/\b(?:circuitikz|to\[.*?(?:R|C|L|D|op amp))\b/isu, "circuits"],
+  [/\b(?:on background layer|backgrounds)\b/u, "backgrounds"],
+  [/\b(?:start chain|continue chain|join chain|chain in)\b/u, "chains"],
   [/\b(?:decorate|decoration=|snake|zigzag|brace)\b/u, "decorations"],
   [/\b(?:markings|mark=at position)\b/u, "decorations.markings"],
-  [/\b(?:snake|coil|bent|random steps)\b/u, "decorations.pathmorphing"],
-  [/\b(?:replace|show path construction steps)\b/u, "decorations.pathreplacing"],
-  [/\b(?:ellipse connection|crossing over|er)\b/u, "er"],
-  [/\b(?:fadings|fade=|path fading)\b/u, "fadings"],
-  [/\b(?:fit=|fit\s*=)\b/u, "fit"],
-  [/\b(?:graph\s+\{|graph\[|\bgraphs\b)/u, "graphs"],
+  [/\b(?:coil|random steps|pathmorphing)\b/u, "decorations.pathmorphing"],
+  [/\b(?:pathreplacing|replace path|show path construction steps)\b/u, "decorations.pathreplacing"],
+  [/\b(?:ellipse connection|crossing over|entity relationship)\b/u, "er"],
+  [/\b(?:fade=|path fading|fadings)\b/u, "fadings"],
+  [/\bfit\s*=\s*\([^)]*\)/u, "fit"],
+  [/\\graph\b|\bgraph\s*\[/u, "graphs"],
   [/\b(?:name intersections|of=|by=)\b/u, "intersections"],
-  [/\b(?:matrix of|matrix\s+of|matrix\[)/u, "matrix"],
+  [/\bmatrix\s+of\b|\bmatrix\s*\[/u, "matrix"],
   [/\b(?:mindmap|concept color|concept connection)\b/u, "mindmap"],
-  [/\b(?:pattern=|pattern color|patterns)\b/u, "patterns"],
-  [/\b(?:above=of|below=of|left=of|right=of|above left=of|below right=of)\b/u, "positioning"],
-  [/\b(?:quotes|pic\s+\{|[^\s]+\s+edge)\b/u, "quotes"],
-  [/\b(?:scope\s*\[.*?on background layer|local bounding box)\b/isu, "scopes"],
+  [/\bpattern\s*=|\bpattern color\b/u, "patterns"],
+  [/\b(?:above|below|left|right|above left|below right|above right|below left)=of\b/u, "positioning"],
+  [/\bpic\s*\[/u, "quotes"],
+  [/\b(?:scope\s*\[|local bounding box)\b/u, "scopes"],
   [/\b(?:diamond|trapezium|regular polygon|ellipse)\b/u, "shapes.geometric"],
   [/\b(?:single arrow|double arrow|triangle 90|signal)\b/u, "shapes.arrows"],
   [/\b(?:callout|cloud callout|ellipse callout)\b/u, "shapes.callouts"],
-  [/\b(?:rounded rectangle|rectangle split|trapezium split)\b/u, "shapes.multipart"],
-  [/\b(?:drop shadow|copy shadow|preaction=\{draw=none,shadow)\b/u, "shadows"],
+  [/\b(?:rectangle split|trapezium split|circle split)\b/u, "shapes.multipart"],
+  [/\b(?:drop shadow|copy shadow|shadowed)\b/u, "shadows"],
   [/\b(?:spy using outlines|spy on node)\b/u, "spy"],
   [/\b(?:through=|circle through|ellipse through)\b/u, "through"],
-  [/\b(?:\bchild\b.*\bchild\b|grow(?:'|=| right| left| up| down))\b/isu, "trees"],
-  [/\b(?:pic\s+\{|angle|angle radius|angle eccentricity)\b/u, "angles"],
-  [/\b(?:axis cs:|rel axis cs:|canvas cs:|xyz cylindrical cs:)\b/u, "3d"],
-  [/\b(?:babel|\bcsname\b)/u, "babel"],
-];
-
-const ALWAYS_LIBRARIES = [
-  "arrows.meta", "calc", "positioning", "shapes.geometric",
+  [/\b(?:child\s*\{|grow(?:'|=|\s+(?:right|left|up|down)))\b/isu, "trees"],
+  [/\b(?:pic\s*\[|angle radius|angle eccentricity|right angle)\b/u, "angles"],
+  [/\b(?:xyz cylindrical cs:|canvas is xy plane at z|canvas cs:)\b/u, "3d"],
+  [/\b(?:babel|csname)\b/u, "babel"],
 ];
 
 export function augmentPreamble(preamble: string, source: string): string {
@@ -65,17 +65,22 @@ export function augmentPreamble(preamble: string, source: string): string {
     if (pattern.test(source) && !hasUsepackage(combined, packageName)) packages.add(packageName);
   }
 
-  for (const library of ALWAYS_LIBRARIES) {
-    if (!hasTikzLibrary(combined, library)) libraries.add(library);
-  }
   for (const [pattern, library] of LIBRARY_BY_PATTERN) {
     if (pattern.test(source) && !hasTikzLibrary(combined, library)) libraries.add(library);
   }
 
   if (packages.size === 0 && libraries.size === 0) return preamble;
-  const packageBlock = [...packages].map((name) => `\\usepackage{${name}}`).join("\n");
-  const libraryBlock = libraries.size > 0 ? `\\usetikzlibrary{${[...libraries].join(",")}}` : "";
-  return [preamble.trimEnd(), packageBlock, libraryBlock].filter(Boolean).join("\n") + "\n";
+
+  const packageBlock = [...packages]
+    .map((name) => `\\usepackage{${name}}`)
+    .join("\n");
+  const libraryBlock = libraries.size > 0
+    ? `\\usetikzlibrary{${[...libraries].join(",")}}`
+    : "";
+
+  return [preamble.trimEnd(), packageBlock, libraryBlock]
+    .filter(Boolean)
+    .join("\n") + "\n";
 }
 
 function hasUsepackage(text: string, name: string): boolean {
