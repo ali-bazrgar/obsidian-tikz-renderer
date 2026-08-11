@@ -27,7 +27,7 @@ const result = await esbuild.build({
 });
 
 if (production && result.metafile) {
-  await writeFile("meta.json", result.metafile, "utf8");
+  await writeFile("meta.json", JSON.stringify(result.metafile, null, 2), "utf8");
 }
 
 console.log(production ? "Production build complete." : "Development build complete.");
