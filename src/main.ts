@@ -24,28 +24,20 @@ export default class TikzRendererPlugin extends Plugin {
     this.renderService = new RenderService(this.app, () => this.settings);
     this.exportService = new ExportService(this.app, () => this.settings.assetFolder);
     this.historyStore = new TikzHistoryStore(this.app, () => this.settings.historyLimit);
-
     for (const language of LANGUAGES) {
       this.registerMarkdownCodeBlockProcessor(language, (source, el, ctx) =>
         TikzMarkdownProcessor.process(this.app, this.exportService, this.historyStore, language, source, el, ctx, this.renderService, () => this.settings, async (settings) => this.saveSettings(settings)),
       );
     }
-
-    // Obsidian may create the generated wikilink anchor after the TikZ processor
-    // has finished. Observe the rendered DOM and mark only anchors whose href is
-    // explicitly tagged by our generated-link data attribute.
     this.generatedLinkObserver = new MutationObserver(() => this.markGeneratedLinks());
     this.generatedLinkObserver.observe(document.body, { childList: true, subtree: true });
     this.register(() => this.generatedLinkObserver?.disconnect());
     this.markGeneratedLinks();
-
-    this.addCommand({ id: "test-tex-installation", name: "Test TeX installation", callback: async () => {
-      const result = await this.renderService.testInstallation();
-      new Notice(result.summary, 8000);
-    }});
+    this.addCommand({ id: "test-tex-installation", name: "Test TeX installation", callback: async () => { const result = await this.renderService.testInstallation(); new Notice(result.summary, 8000); }});
     this.addCommand({ id: "detect-tex-executables", name: "Detect TeX Live executables", callback: async () => this.detectTeXExecutables() });
     this.addCommand({ id: "clear-render-cache", name: "Clear TikZ render cache", callback: async () => { await this.renderService.clearCache(); new Notice("TikZ render cache cleared."); }});
     this.addSettingTab(new TikzSettingTab(this.app, this));
+    this.syncRenderedTheme();
   }
 
   private markGeneratedLinks(): void {
@@ -53,13 +45,26 @@ export default class TikzRendererPlugin extends Plugin {
     for (const link of anchors) {
       const href = decodeURIComponent(link.getAttribute("href") ?? "").replace(/\\/gu, "/");
       const text = link.textContent?.trim() ?? "";
-      if (/^#tikz-edit:/u.test(href) || text === "✎ Edit TikZ") {
-        link.classList.add(GENERATED_EDIT_CLASS);
-      }
-      // Generated asset links are identified by the marker written by the
-      // markdown processor. Do not hide unrelated user SVG attachments.
+      if (/^#tikz-edit:/u.test(href) || text === "✎ Edit TikZ") link.classList.add(GENERATED_EDIT_CLASS);
       if (link.dataset.tikzGenerated) link.classList.add(GENERATED_ASSET_CLASS);
     }
+  }
+
+  private syncRenderedTheme(): void {
+    const settings = this.settings;
+    const theme = settings.displayTheme === "auto"
+      ? (document.body.classList.contains("theme-dark") ? "dark" : "light")
+      : settings.displayTheme;
+    document.querySelectorAll<HTMLElement>(".tikz-renderer-shell").forEach((shell) => {
+      shell.dataset.theme = theme;
+      if (theme === "custom") {
+        shell.style.setProperty("--tikz-custom-bg", settings.customBackgroundColor);
+        shell.style.setProperty("--tikz-custom-bg-opacity", `${settings.customBackgroundOpacity / 100}`);
+      } else {
+        shell.style.removeProperty("--tikz-custom-bg");
+        shell.style.removeProperty("--tikz-custom-bg-opacity");
+      }
+    });
   }
 
   onunload(): void {
@@ -70,26 +75,15 @@ export default class TikzRendererPlugin extends Plugin {
   }
 
   async loadSettings(): Promise<void> { this.settings = { ...DEFAULT_SETTINGS, ...(await this.loadData() as Partial<TikzSettings>) }; }
-  async saveSettings(settings?: TikzSettings): Promise<void> { if (settings) this.settings = settings; await this.saveData(this.settings); }
+  async saveSettings(settings?: TikzSettings): Promise<void> { if (settings) this.settings = settings; await this.saveData(this.settings); this.syncRenderedTheme(); }
 
   async detectTeXExecutables(): Promise<ExecutableProbe[]> {
     const rootCandidates = texLiveExecutableCandidates(this.settings.texLiveRoot);
-    const paths: Partial<Record<TeXExecutableName, string>> = {
-      latex: rootCandidates.latex ?? this.settings.latexPath,
-      pdflatex: rootCandidates.pdflatex ?? this.settings.pdflatexPath,
-      xelatex: rootCandidates.xelatex ?? this.settings.xelatexPath,
-      lualatex: rootCandidates.lualatex ?? this.settings.lualatexPath,
-      dvilualatex: rootCandidates.dvilualatex ?? this.settings.dvilualatexPath,
-      dvisvgm: rootCandidates.dvisvgm ?? this.settings.dvisvgmPath,
-      mutool: rootCandidates.mutool ?? this.settings.mutoolPath,
-    };
+    const paths: Partial<Record<TeXExecutableName, string>> = { latex: rootCandidates.latex ?? this.settings.latexPath, pdflatex: rootCandidates.pdflatex ?? this.settings.pdflatexPath, xelatex: rootCandidates.xelatex ?? this.settings.xelatexPath, lualatex: rootCandidates.lualatex ?? this.settings.lualatexPath, dvilualatex: rootCandidates.dvilualatex ?? this.settings.dvilualatexPath, dvisvgm: rootCandidates.dvisvgm ?? this.settings.dvisvgmPath, mutool: rootCandidates.mutool ?? this.settings.mutoolPath };
     const results = await probeAllExecutables(paths);
     const detected = { ...this.settings };
     const keys: Array<[keyof TikzSettings, TeXExecutableName]> = [["latexPath", "latex"], ["pdflatexPath", "pdflatex"], ["xelatexPath", "xelatex"], ["lualatexPath", "lualatex"], ["dvilualatexPath", "dvilualatex"], ["dvisvgmPath", "dvisvgm"], ["mutoolPath", "mutool"]];
-    for (const [setting, name] of keys) {
-      const result = results.find((item) => item.name === name);
-      if (result?.ok) (detected as Record<string, unknown>)[setting] = result.configuredPath;
-    }
+    for (const [setting, name] of keys) { const result = results.find((item) => item.name === name); if (result?.ok) (detected as Record<string, unknown>)[setting] = result.configuredPath; }
     await this.saveSettings(detected);
     const summary = results.map((result) => `${result.name}: ${result.ok ? "OK" : `FAILED — ${result.error ?? "unknown error"}`}`).join("\n");
     new Notice(summary, 10000);
@@ -100,16 +94,12 @@ export default class TikzRendererPlugin extends Plugin {
 class TikzSettingTab extends PluginSettingTab {
   private detectionContainer?: HTMLElement;
   constructor(app: import("obsidian").App, private readonly plugin: TikzRendererPlugin) { super(app, plugin); }
-
   display(): void {
-    const container = this.containerEl;
-    container.empty();
-    container.createEl("h2", { text: "TikZ Renderer" });
+    const container = this.containerEl; container.empty(); container.createEl("h2", { text: "TikZ Renderer" });
     new Setting(container).setName("Engine").addDropdown((dropdown) => dropdown.addOptions({ auto: "Auto", latex: "latex", pdflatex: "pdflatex", xelatex: "xelatex", lualatex: "lualatex", dvilualatex: "dvilualatex" }).setValue(this.plugin.settings.engine).onChange(async (value) => this.plugin.saveSettings({ ...this.plugin.settings, engine: value as TikzSettings["engine"] })));
     new Setting(container).setName("TeX Live root").setDesc("Accepts either the installation root or its Windows binary directory.").addText((text) => text.setPlaceholder("D:\\texlive\\2025").setValue(this.plugin.settings.texLiveRoot).onChange(async (value) => this.plugin.saveSettings({ ...this.plugin.settings, texLiveRoot: value.trim() })));
     new Setting(container).setName("Detect TeX Live executables").setDesc("Checks every configured executable with --version.").addButton((button) => button.setButtonText("Detect").onClick(async () => this.renderDetectionResults(await this.plugin.detectTeXExecutables())));
-    this.detectionContainer = container.createDiv({ cls: "tikz-detection-results" });
-    this.renderDetectionResults([]);
+    this.detectionContainer = container.createDiv({ cls: "tikz-detection-results" }); this.renderDetectionResults([]);
     const paths: Array<[keyof TikzSettings, string]> = [["latexPath", "latex path"], ["pdflatexPath", "pdflatex path"], ["xelatexPath", "xelatex path"], ["lualatexPath", "lualatex path"], ["dvilualatexPath", "dvilualatex path"], ["dvisvgmPath", "dvisvgm path"], ["mutoolPath", "mutool path"]];
     for (const [key, name] of paths) new Setting(container).setName(name).addText((text) => text.setValue(String(this.plugin.settings[key])).onChange(async (value) => this.plugin.saveSettings({ ...this.plugin.settings, [key]: value.trim() })));
     new Setting(container).setName("Asset folder").addText((text) => text.setValue(this.plugin.settings.assetFolder).onChange(async (value) => this.plugin.saveSettings({ ...this.plugin.settings, assetFolder: normalizePath(value.trim()) })));
@@ -124,15 +114,5 @@ class TikzSettingTab extends PluginSettingTab {
     new Setting(container).setName("History limit").addSlider((slider) => slider.setLimits(1, 100, 1).setValue(this.plugin.settings.historyLimit).setDynamicTooltip().onChange(async (value) => this.plugin.saveSettings({ ...this.plugin.settings, historyLimit: value })));
     new Setting(container).setName("Preamble").addTextArea((text) => { text.setValue(this.plugin.settings.preamble).onChange(async (value) => this.plugin.saveSettings({ ...this.plugin.settings, preamble: value })); text.inputEl.rows = 18; text.inputEl.cols = 80; });
   }
-
-  private renderDetectionResults(results: ExecutableProbe[]): void {
-    const container = this.detectionContainer;
-    if (!container) return;
-    container.empty();
-    for (const result of results) {
-      const row = container.createDiv({ cls: result.ok ? "tikz-detection-ok" : "tikz-detection-failed" });
-      row.createSpan({ text: `${result.ok ? "✓" : "✗"} ${result.name}: ${result.ok ? "OK" : "FAILED"}` });
-      row.createEl("small", { text: result.ok ? `${result.configuredPath}${result.version ? ` — ${result.version}` : ""}` : (result.error ?? "Unknown error") });
-    }
-  }
+  private renderDetectionResults(results: ExecutableProbe[]): void { const container = this.detectionContainer; if (!container) return; container.empty(); for (const result of results) { const row = container.createDiv({ cls: result.ok ? "tikz-detection-ok" : "tikz-detection-failed" }); row.createSpan({ text: `${result.ok ? "✓" : "✗"} ${result.name}: ${result.ok ? "OK" : "FAILED"}` }); row.createEl("small", { text: result.ok ? `${result.configuredPath}${result.version ? ` — ${result.version}` : ""}` : (result.error ?? "Unknown error") }); } }
 }
