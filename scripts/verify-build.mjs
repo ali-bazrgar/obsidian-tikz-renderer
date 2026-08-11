@@ -15,19 +15,24 @@ const codeMirrorImports = (output.imports ?? []).filter((item) =>
   item.path.startsWith("@codemirror/state/") || item.path.startsWith("@codemirror/view/"),
 );
 for (const item of codeMirrorImports) {
-  if (!item.external) throw new Error(`CodeMirror import is not externalized: ${item.path}`);
+  if (item.external) throw new Error(`CodeMirror import was incorrectly externalized: ${item.path}`);
 }
 
 const lock = JSON.parse(await readFile("package-lock.json", "utf8"));
 const packages = lock.packages ?? {};
-for (const packageName of ["@codemirror/state", "@codemirror/view"]) {
+const expected = {
+  "@codemirror/state": "6.5.2",
+  "@codemirror/view": "6.36.5",
+};
+for (const [packageName, expectedVersion] of Object.entries(expected)) {
   const prefix = `node_modules/${packageName}`;
   const instances = Object.entries(packages).filter(([key]) => key === prefix || key.endsWith(`/node_modules/${packageName}`));
   const versions = [...new Set(instances.map(([, value]) => value?.version).filter(Boolean))];
-  if (versions.length > 1) throw new Error(`Multiple installed ${packageName} versions detected: ${versions.join(", ")}`);
   if (instances.length === 0) throw new Error(`Locked dependency missing: ${packageName}`);
+  if (versions.length > 1) throw new Error(`Multiple installed ${packageName} versions detected: ${versions.join(", ")}`);
+  if (versions[0] !== expectedVersion) throw new Error(`Unexpected ${packageName} version: ${versions[0]}; expected ${expectedVersion}.`);
 }
 
 console.log("Build artifacts verified.");
 console.log(`esbuild bundled inputs: ${Object.keys(meta.inputs ?? {}).length}`);
-console.log("CodeMirror state/view are external runtime modules and have a single locked version each.");
+console.log("CodeMirror state/view are bundled and pinned to one exact locked version each.");
