@@ -35,17 +35,20 @@ export class TikzMarkdownProcessor {
   }
 }
 
-/** Add a real Obsidian wikilink directly below the TikZ fence. */
+/** Add the real Obsidian wikilink immediately after the complete TikZ fence. */
 async function ensureSourceAssetLink(app: App, sourcePath: string, section: MarkdownSectionInformation, assetPath: string): Promise<void> {
   const file = app.vault.getFileByPath(sourcePath);
   if (!(file instanceof TFile) || !assetPath) return;
+  const wikilink = `[[${assetPath}]]`;
   await app.vault.process(file, (data) => {
-    const start = findNthLineOffset(data, section.lineEnd);
-    const before = data.slice(Math.max(0, start - 500), start);
-    const wikilink = `[[${assetPath}]]`;
-    if (before.includes(wikilink)) return data;
+    // lineEnd is the last line of the rendered section; inserting at the next
+    // line keeps the wikilink outside the closing ``` fence.
+    const insertionOffset = findNthLineOffset(data, section.lineEnd + 1);
+    const before = data.slice(Math.max(0, insertionOffset - 600), insertionOffset);
+    const after = data.slice(insertionOffset, Math.min(data.length, insertionOffset + 600));
+    if (before.includes(wikilink) || after.startsWith(wikilink)) return data;
     const eol = data.includes("\r\n") ? "\r\n" : "\n";
-    return `${data.slice(0, start)}${eol}${wikilink}${eol}${data.slice(start)}`;
+    return `${data.slice(0, insertionOffset)}${wikilink}${eol}${data.slice(insertionOffset)}`;
   });
 }
 
