@@ -12,7 +12,7 @@ import { augmentPreamble } from "./tex-package-detector";
 import { TeXDependencyResolver } from "./tex-dependency-resolver";
 
 const execFileAsync = promisify(execFile);
-const PIPELINE_VERSION = "16-texlive-block-resolver-pdf-svg-stdout";
+const PIPELINE_VERSION = "17-texlive-resolver-dvi-svg-hardened";
 const MAX_OUTPUT = 4 * 1024 * 1024;
 const MAX_DEPENDENCY_RETRIES = 3;
 
@@ -104,31 +104,78 @@ export class RenderService {
 
   private async convertToSvg(input: string, outputType: EnginePlan["outputType"], work: string, settings: TikzSettings): Promise<string> {
     const output = path.join(work, "main.svg");
+
     if (outputType === "pdf") {
       const mutool = settings.mutoolPath.trim() || "mutool";
-      // Use stdout first. This avoids Windows/older-MuPDF filename-template
-      // differences where mutool exits successfully but writes main-1.svg.
       const result = await this.runCapture(mutool, ["draw", "-q", "-F", "svg", "-o", "-", input, "1"], work, settings.compileTimeout);
       const stdout = String(result.stdout ?? "").trim();
       if (stdout.startsWith("<svg") || /<svg\b/i.test(stdout)) {
         const svgStart = stdout.search(/<svg\b/i);
         await fs.writeFile(output, stdout.slice(svgStart), "utf8");
       }
-
-      // Fallback for MuPDF builds that do not support stdout SVG output.
       if (!await this.exists(output)) {
         await this.run(mutool, ["draw", "-q", "-F", "svg", "-o", output, input, "1"], work, settings.compileTimeout);
       }
-
-      // Some MuPDF builds create a numbered filename even for one page.
       if (!await this.exists(output)) {
         const numbered = path.join(work, "main-1.svg");
         if (await this.exists(numbered)) await fs.rename(numbered, output);
       }
     } else {
       const dvisvgm = settings.dvisvgmPath.trim() || "dvisvgm";
-      await this.run(dvisvgm, ["-n", input, "-o", output], work, settings.compileTimeout);
+      let dvisvgmError: unknown = undefined;
+
+      try {
+        // --exact-bbox prevents clipping of glyphs whose real outlines exceed
+        // their TFM dimensions. --no-fonts makes the SVG browser-compatible by
+        // converting TeX glyphs to ordinary SVG paths.
+        await this.run(dvisvgm, ["--exact-bbox", "--no-fonts", "--verbosity=0", input, "-o", output], work, settings.compileTimeout);
+      } catch (error) {
+        dvisvgmError = error;
+      }
+
+      // dvisvgm normally writes main.svg for a one-page DVI, but some builds
+      // choose a numbered filename. Normalize that result before declaring
+      // failure.
+      if (!await this.exists(output)) {
+        const candidates = [
+          path.join(work, "main-1.svg"),
+          path.join(work, "main-01.svg"),
+        ];
+        for (const candidate of candidates) {
+          if (await this.exists(candidate)) {
+            await fs.rename(candidate, output);
+            break;
+          }
+        }
+      }
+
+      // Last-resort DVI -> PDF -> SVG fallback. This keeps the DVI engine
+      // usable even when a particular dvisvgm build cannot process a special.
+      if (!await this.exists(output)) {
+        const dvipdfmx = resolveSiblingExecutable(settings.latexPath, "dvipdfmx");
+        const pdf = path.join(work, "main-from-dvi.pdf");
+        try {
+          await this.run(dvipdfmx, ["-o", pdf, input], work, settings.compileTimeout);
+          if (await this.exists(pdf)) {
+            const mutool = settings.mutoolPath.trim() || "mutool";
+            const result = await this.runCapture(mutool, ["draw", "-q", "-F", "svg", "-o", "-", pdf, "1"], work, settings.compileTimeout);
+            const stdout = String(result.stdout ?? "").trim();
+            const svgStart = stdout.search(/<svg\b/i);
+            if (svgStart >= 0) await fs.writeFile(output, stdout.slice(svgStart), "utf8");
+            if (!await this.exists(output)) await this.run(mutool, ["draw", "-q", "-F", "svg", "-o", output, pdf, "1"], work, settings.compileTimeout);
+            if (!await this.exists(output)) {
+              const numbered = path.join(work, "main-from-dvi-1.svg");
+              if (await this.exists(numbered)) await fs.rename(numbered, output);
+            }
+          }
+        } catch (fallbackError) {
+          const dviMessage = dvisvgmError instanceof Error ? dvisvgmError.message : String(dvisvgmError ?? "unknown dvisvgm error");
+          const fallbackMessage = fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
+          throw new RenderError(`DVI to SVG conversion failed. dvisvgm: ${dviMessage}\nDVI→PDF→SVG fallback: ${fallbackMessage}`);
+        }
+      }
     }
+
     if (!await this.exists(output)) {
       const files = await fs.readdir(work).catch(() => []);
       throw new RenderError(`The vector converter completed without producing an SVG file. Files in work directory: ${files.join(", ")}`);
@@ -211,6 +258,13 @@ export function buildDocument(source: string, settings: TikzSettings, preambleOv
 export function compilerArgs(tex: string, work: string, outputType: EnginePlan["outputType"] = "pdf"): string[] {
   const common = ["-interaction=nonstopmode", "-halt-on-error", "-file-line-error", "-no-shell-escape", "-output-directory", work];
   return outputType === "xdv" ? [...common, "-no-pdf", tex] : [...common, tex];
+}
+
+function resolveSiblingExecutable(configured: string, name: string): string {
+  const value = configured.trim();
+  if (!value) return name;
+  if (path.isAbsolute(value)) return path.join(path.dirname(value), process.platform === "win32" ? `${name}.exe` : name);
+  return name;
 }
 
 function escapeTex(value: string): string { return value.replace(/[{}%\\]/g, "\\$&"); }
