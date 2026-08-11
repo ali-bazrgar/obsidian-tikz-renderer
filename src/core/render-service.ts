@@ -11,7 +11,9 @@ import { probeAllExecutables, TeXExecutableName, texLiveExecutableCandidates } f
 import { augmentPreamble } from "./tex-package-detector";
 
 const execFileAsync = promisify(execFile);
-const PIPELINE_VERSION = "9-auto-tex-packages";
+// Bump whenever the generated TeX/preamble pipeline changes so old SVG cache
+// entries can never mask a renderer fix.
+const PIPELINE_VERSION = "10-source-driven-preamble-and-links";
 const MAX_OUTPUT = 4 * 1024 * 1024;
 
 export class RenderError extends Error {
