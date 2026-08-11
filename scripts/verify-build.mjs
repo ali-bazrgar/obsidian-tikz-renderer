@@ -9,14 +9,16 @@ for (const file of required) {
 const meta = JSON.parse(await readFile("meta.json", "utf8"));
 const inputs = Object.keys(meta.inputs ?? {});
 
+// CodeMirror is intentionally externalized. Therefore its source must not be
+// present in the plugin bundle at all. This prevents a second runtime instance
+// from being shipped by the plugin.
 for (const packageName of ["@codemirror/state", "@codemirror/view"]) {
   const matches = inputs.filter((input) => input.includes(`node_modules/${packageName}/`));
-  const packageVersions = new Set(matches.map((input) => input.split(`node_modules/${packageName}/`)[0]));
-  if (packageVersions.size > 1) {
-    throw new Error(`Duplicate ${packageName} dependency roots detected in esbuild graph:\n${matches.join("\n")}`);
+  if (matches.length > 0) {
+    throw new Error(`External CodeMirror package was bundled: ${packageName}\n${matches.join("\n")}`);
   }
 }
 
 console.log("Build artifacts verified.");
 console.log(`esbuild inputs: ${inputs.length}`);
-console.log("CodeMirror dependency roots: single-instance within the plugin bundle.");
+console.log("CodeMirror state/view are external runtime modules; no bundled copies detected.");
