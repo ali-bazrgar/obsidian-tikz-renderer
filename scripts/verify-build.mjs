@@ -41,7 +41,7 @@ if (!mainSource.includes("link.dataset.tikzGenerated")) throw new Error("Generat
 const css = await readFile("styles.css", "utf8");
 const compactCss = css.replace(/\s+/g, "");
 if (!compactCss.includes('.tikz-renderer-panel[hidden]{display:none!important}')) throw new Error("CSS must force the popup to remain hidden until opened.");
-if (css.includes(".tikz-renderer-panel{position:fixed") && css.includes("contain:layout style")) throw new Error("The fixed popup must not establish a nested containing block.");
+if (/\.tikz-renderer-panel\{[^}]*contain:/u.test(css)) throw new Error("The fixed popup must not establish a nested containing block.");
 if (!compactCss.includes('.tikz-renderer-controls{position:absolute') || !compactCss.includes('left:-28px')) throw new Error("TikZ controls must be attached outside the left edge of the figure.");
 if (!compactCss.includes('.tikz-renderer-paper{position:relative;display:contents}')) throw new Error("The old visual paper layer must not create a second figure window.");
 if (!css.includes('.tikz-renderer-shell{') || !css.includes('background:var(--tikz-figure-bg)')) throw new Error("Theme background must be applied to the figure shell only.");
