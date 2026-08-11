@@ -27,7 +27,6 @@ if (!renderer.includes('text: "⋯"')) throw new Error("Writing-view controls ar
 if (!renderer.includes('const isReadingMode = (): boolean => !!shell.closest(".markdown-preview-view")')) throw new Error("Reading-mode detection is missing.");
 if (!renderer.includes('shell.dataset.mode = nextReadingMode ? "reading" : "writing"')) throw new Error("Renderer must explicitly track Reading/Writing mode.");
 if (!renderer.includes('if (isReadingMode()) return;')) throw new Error("Interactive operations must be blocked in Reading mode.");
-if (!renderer.includes('isReadingMode() ? "auto" : zoom > 1 ? "none" : "pan-y"')) throw new Error("Reading mode must not expose pan touch behavior.");
 
 const processor = await readFile("src/markdown/code-block.ts", "utf8");
 if (!processor.includes("const wikilink = `[[${assetPath}]]`;")) throw new Error("TikZ processor must create a real Obsidian wikilink.");
@@ -45,10 +44,10 @@ const compactCss = css.replace(/\s+/g, "");
 if (!compactCss.includes('.tikz-renderer-panel[hidden]{display:none!important}')) throw new Error("CSS must force the popup to remain hidden until opened.");
 if (/\.tikz-renderer-panel\{[^}]*contain:/u.test(css)) throw new Error("The fixed popup must not establish a nested containing block.");
 if (compactCss.includes("tikz-renderer-paper")) throw new Error("The obsolete visual paper layer must be completely removed.");
-if (!compactCss.includes('.tikz-renderer-controls{position:absolute') || !compactCss.includes('left:-28px')) throw new Error("TikZ controls must be attached outside the figure.");
+if (!compactCss.includes('.tikz-renderer-controls{position:absolute') || !compactCss.includes('left:5px')) throw new Error("TikZ controls must be attached outside the figure without changing the figure layer.");
 if (!compactCss.includes('.tikz-renderer-shell{') || !compactCss.includes('background:transparent')) throw new Error("The shell must be visually transparent so it cannot form a second figure.");
 if (!compactCss.includes('.tikz-renderer-viewport{') || !compactCss.includes('background:var(--tikz-figure-bg)')) throw new Error("Theme background must belong to the single visual viewport.");
-if (!/\.tikz-renderer-shell\[data-mode="reading"\] \.tikz-renderer-viewport\{[^}]*pointer-events:none/u.test(css)) throw new Error("Reading mode must lock the figure against pointer interaction.");
+if (!/\.tikz-renderer-shell\[data-mode="reading"\] \.tikz-renderer-viewport\{[^}]*pointer-events:none!important[^}]*touch-action:auto!important/u.test(css)) throw new Error("Reading mode must lock the figure against pointer interaction and restore normal touch behavior.");
 if (!css.includes('.tikz-renderer-shell:not([data-theme="custom"]) .tikz-renderer-svg')) throw new Error("Custom theme must preserve the SVG's original black colors.");
 if (!css.includes('.markdown-preview-view a.tikz-generated-asset-link') || !css.includes('display:none!important')) throw new Error("Generated SVG wikilinks must be hidden only in Reading view.");
 if (!css.includes('.markdown-preview-view a.tikz-generated-edit-link') || !css.includes('display:none!important')) throw new Error("Generated Edit links must be hidden only in Reading view.");
