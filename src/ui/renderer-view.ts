@@ -20,88 +20,184 @@ export class TikzRendererView {
 
   render(): void {
     this.host.empty();
+    const doc = this.host.ownerDocument;
     const root = this.host.createDiv({ cls: "tikz-renderer" });
     root.dataset.theme = this.detectTheme();
 
-    const toolbar = root.createDiv({ cls: "tikz-renderer-toolbar" });
-    toolbar.createSpan({ text: "TikZ Renderer", cls: "tikz-renderer-title" });
-    const menu = toolbar.createEl("button", { cls: "tikz-renderer-menu", attr: { "aria-label": "TikZ controls", type: "button" } });
-    setIcon(menu, "more-vertical");
+    // Controls deliberately live outside the paper/figure surface. They must
+    // never cover, clip, or participate in the SVG's layout.
+    const controls = root.createDiv({ cls: "tikz-renderer-controls" });
+    const menu = controls.createEl("button", {
+      cls: "tikz-renderer-menu",
+      attr: { "aria-label": "TikZ controls", "aria-expanded": "false", type: "button" },
+    });
+    setIcon(menu, "more-horizontal");
 
-    const canvas = root.createDiv({ cls: "tikz-renderer-canvas" });
-    const viewport = canvas.createDiv({ cls: "tikz-renderer-viewport" });
-    const img = viewport.createEl("img", { cls: "tikz-renderer-svg", attr: { alt: "TikZ diagram", draggable: "false" } });
+    const paper = root.createDiv({ cls: "tikz-renderer-paper" });
+    const viewport = paper.createDiv({ cls: "tikz-renderer-viewport" });
+    const img = viewport.createEl("img", {
+      cls: "tikz-renderer-svg",
+      attr: { alt: "TikZ diagram", draggable: "false" },
+    });
     img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(this.result.svg)}`;
 
     let zoom = 1;
     let x = 0;
     let y = 0;
+    let dragging = false;
+    let lastX = 0;
+    let lastY = 0;
+
+    const clampZoom = (value: number): number => Math.min(5, Math.max(0.25, value));
     const apply = (): void => {
       img.style.transform = `translate3d(${x}px, ${y}px, 0) scale(${zoom})`;
+      img.dataset.zoom = `${Math.round(zoom * 100)}%`;
+    };
+    const resetView = (): void => { zoom = 1; x = 0; y = 0; apply(); };
+    const fit = (): void => {
+      const availableWidth = Math.max(1, viewport.clientWidth - 28);
+      const availableHeight = Math.max(1, viewport.clientHeight - 28);
+      if (img.naturalWidth > 0 && img.naturalHeight > 0) {
+        zoom = clampZoom(Math.min(1, availableWidth / img.naturalWidth, availableHeight / img.naturalHeight));
+      } else {
+        zoom = 1;
+      }
+      x = 0;
+      y = 0;
+      apply();
     };
 
-    const panel = root.createDiv({ cls: "tikz-renderer-panel" });
+    const panel = doc.createDiv({ cls: "tikz-renderer-panel" });
     panel.hidden = true;
+    panel.setAttribute("role", "menu");
+    doc.body.appendChild(panel);
+
+    const positionPanel = (): void => {
+      const rect = menu.getBoundingClientRect();
+      const panelRect = panel.getBoundingClientRect();
+      const gap = 6;
+      let left = rect.left;
+      let top = rect.bottom + gap;
+      if (left + panelRect.width > doc.documentElement.clientWidth - 8) left = Math.max(8, doc.documentElement.clientWidth - panelRect.width - 8);
+      if (top + panelRect.height > doc.documentElement.clientHeight - 8) top = Math.max(8, rect.top - panelRect.height - gap);
+      panel.style.left = `${left}px`;
+      panel.style.top = `${top}px`;
+    };
+
+    const closePanel = (): void => {
+      panel.hidden = true;
+      menu.setAttribute("aria-expanded", "false");
+    };
+    const togglePanel = (): void => {
+      panel.hidden = !panel.hidden;
+      menu.setAttribute("aria-expanded", `${!panel.hidden}`);
+      if (!panel.hidden) {
+        positionPanel();
+        panel.querySelector<HTMLButtonElement>("button")?.focus();
+      }
+    };
+
     menu.addEventListener("click", (event) => {
       event.stopPropagation();
-      panel.hidden = !panel.hidden;
+      togglePanel();
     });
 
     const button = (label: string, action: () => void | Promise<void>): void => {
-      const el = panel.createEl("button", { text: label, attr: { type: "button" } });
+      const el = panel.createEl("button", { text: label, attr: { type: "button", role: "menuitem" } });
       el.addEventListener("click", (event) => {
         event.stopPropagation();
         void action();
       });
     };
 
-    button("−", () => { zoom = Math.max(0.25, zoom - 0.25); apply(); });
-    button("Reset", () => { zoom = 1; x = 0; y = 0; apply(); });
-    button("+", () => { zoom = Math.min(5, zoom + 0.25); apply(); });
-    button("Fit", () => {
-      const width = viewport.clientWidth;
-      if (width > 0 && img.naturalWidth > 0) zoom = Math.min(1, width / img.naturalWidth);
-      x = 0; y = 0; apply();
-    });
-    button("Edit", () => new TikzSourceModal(this.app, this.source, async (next) => this.editSource(next)).open());
+    button("Zoom −", () => { zoom = clampZoom(zoom - 0.25); apply(); });
+    button("Zoom +", () => { zoom = clampZoom(zoom + 0.25); apply(); });
+    button("Reset view", resetView);
+    button("Fit", fit);
+    button("Edit source", () => new TikzSourceModal(this.app, this.source, async (next) => this.editSource(next)).open());
     button("History", () => this.showHistory(panel));
-    button("Copy source", async () => { await navigator.clipboard.writeText(this.source); new Notice("TikZ source copied."); });
-    button("Copy embed", async () => { await navigator.clipboard.writeText(`\`\`\`${this.kind}\n${this.source}\n\`\`\``); new Notice("TikZ embed copied."); });
-    button("Export SVG", async () => { try { await this.exportService.saveSvg(this.result.svg, this.result.hash); } catch (error) { new Notice(error instanceof Error ? error.message : String(error), 8000); } });
-    button("Export PNG", async () => { try { await this.exportService.savePng(this.result.svg, this.result.hash); } catch (error) { new Notice(error instanceof Error ? error.message : String(error), 8000); } });
     button("Re-render", async () => {
       try {
         const next = await this.service.render(this.source, this.kind);
         this.result.svg = next.svg;
+        closePanel();
         this.render();
       } catch (error) {
         new Notice(error instanceof Error ? error.message : String(error), 8000);
       }
     });
+    button("Copy source", async () => { await navigator.clipboard.writeText(this.source); new Notice("TikZ source copied."); });
+    button("Copy embed", async () => { await navigator.clipboard.writeText(`\`\`\`${this.kind}\n${this.source}\n\`\`\``); new Notice("TikZ embed copied."); });
+    button("Export SVG", async () => { try { await this.exportService.saveSvg(this.result.svg, this.result.hash); } catch (error) { new Notice(error instanceof Error ? error.message : String(error), 8000); } });
+    button("Export PNG", async () => { try { await this.exportService.savePng(this.result.svg, this.result.hash); } catch (error) { new Notice(error instanceof Error ? error.message : String(error), 8000); } });
 
-    let dragging = false;
-    let lastX = 0;
-    let lastY = 0;
-    viewport.addEventListener("pointerdown", (event) => {
-      if (event.button !== 0 || panel.contains(event.target as Node) || menu.contains(event.target as Node)) return;
-      dragging = true; lastX = event.clientX; lastY = event.clientY;
-      viewport.classList.add("is-dragging"); viewport.setPointerCapture(event.pointerId);
-    });
-    viewport.addEventListener("pointermove", (event) => {
+    const onDocumentPointerDown = (event: PointerEvent): void => {
+      if (panel.hidden || panel.contains(event.target as Node) || menu.contains(event.target as Node)) return;
+      closePanel();
+    };
+    doc.addEventListener("pointerdown", onDocumentPointerDown, true);
+
+    const onViewportPointerDown = (event: PointerEvent): void => {
+      if (event.button !== 0) return;
+      dragging = true;
+      lastX = event.clientX;
+      lastY = event.clientY;
+      viewport.classList.add("is-dragging");
+      viewport.setPointerCapture(event.pointerId);
+      event.preventDefault();
+    };
+    const onViewportPointerMove = (event: PointerEvent): void => {
       if (!dragging) return;
-      x += event.clientX - lastX; y += event.clientY - lastY;
-      lastX = event.clientX; lastY = event.clientY; apply();
-    });
-    const stopDragging = (): void => { dragging = false; viewport.classList.remove("is-dragging"); };
+      x += event.clientX - lastX;
+      y += event.clientY - lastY;
+      lastX = event.clientX;
+      lastY = event.clientY;
+      apply();
+      event.preventDefault();
+    };
+    const stopDragging = (): void => {
+      dragging = false;
+      viewport.classList.remove("is-dragging");
+    };
+
+    viewport.addEventListener("pointerdown", onViewportPointerDown);
+    viewport.addEventListener("pointermove", onViewportPointerMove);
     viewport.addEventListener("pointerup", stopDragging);
     viewport.addEventListener("pointercancel", stopDragging);
     viewport.addEventListener("lostpointercapture", stopDragging);
 
-    // Obsidian's CSS changes globally when the theme changes. Do not create a
-    // MutationObserver per renderer: dozens of TikZ blocks would otherwise
-    // create dozens of long-lived observers. Theme colors are inherited from
-    // Obsidian CSS, so a renderer only needs its initial semantic marker.
-    img.addEventListener("load", () => { img.dataset.tikzTheme = this.detectTheme(); }, { once: true });
+    // Wheel zoom is intentionally local to the figure. Once zoomed, drag/pan
+    // works with the same pointer gesture and does not depend on the menu.
+    viewport.addEventListener("wheel", (event) => {
+      const factor = event.deltaY < 0 ? 1.12 : 1 / 1.12;
+      const nextZoom = clampZoom(zoom * factor);
+      if (nextZoom === zoom) return;
+      const rect = viewport.getBoundingClientRect();
+      const px = event.clientX - (rect.left + rect.width / 2);
+      const py = event.clientY - (rect.top + rect.height / 2);
+      const ratio = nextZoom / zoom;
+      x = px - (px - x) * ratio;
+      y = py - (py - y) * ratio;
+      zoom = nextZoom;
+      apply();
+      event.preventDefault();
+    }, { passive: false });
+
+    const onResize = (): void => { if (!panel.hidden) positionPanel(); };
+    doc.defaultView?.addEventListener("resize", onResize);
+    doc.defaultView?.addEventListener("scroll", onResize, true);
+
+    const cleanup = (): void => {
+      doc.removeEventListener("pointerdown", onDocumentPointerDown, true);
+      doc.defaultView?.removeEventListener("resize", onResize);
+      doc.defaultView?.removeEventListener("scroll", onResize, true);
+      panel.remove();
+    };
+    root.addEventListener("DOMNodeRemoved", (event) => {
+      if (event.target === root) cleanup();
+    }, { once: true });
+
+    img.addEventListener("load", () => { fit(); }, { once: true });
     apply();
   }
 
@@ -123,7 +219,7 @@ export class TikzRendererView {
   }
 
   private detectTheme(): string {
-    const classes = document.body.classList;
+    const classes = this.host.ownerDocument.body.classList;
     if (classes.contains("theme-dark")) return "dark";
     if (classes.contains("theme-light")) return "light";
     return "obsidian";
@@ -133,9 +229,12 @@ export class TikzRendererView {
 class TikzSourceModal extends Modal {
   constructor(app: App, private readonly initialSource: string, private readonly onRender: (source: string) => Promise<void>) { super(app); }
   onOpen(): void {
-    this.titleEl.setText("TikZ Source");
+    // Keep the editor visually quiet: the source itself is the UI.
+    this.titleEl.empty();
+    this.contentEl.empty();
     const editor = this.contentEl.createEl("textarea", { cls: "tikz-source-editor" });
-    editor.value = this.initialSource; editor.spellcheck = false;
+    editor.value = this.initialSource;
+    editor.spellcheck = false;
     const actions = this.contentEl.createDiv({ cls: "tikz-source-actions" });
     actions.createEl("button", { text: "Cancel", attr: { type: "button" } }).addEventListener("click", () => this.close());
     actions.createEl("button", { text: "Render", attr: { type: "button" } }).addEventListener("click", async () => {
