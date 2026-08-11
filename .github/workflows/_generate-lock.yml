@@ -13,7 +13,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      - run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+      - name: Regenerate lockfile from package.json
+        shell: bash
+        run: |
+          rm -f package-lock.json
+          npm install --package-lock-only --ignore-scripts --no-audit --no-fund
       - name: Commit generated lockfile
         shell: bash
         run: |
@@ -21,5 +25,5 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add package-lock.json
           git diff --cached --quiet && exit 0
-          git commit -m "Add reproducible npm lockfile"
+          git commit -m "Regenerate npm lockfile"
           git push
