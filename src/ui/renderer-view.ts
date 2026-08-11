@@ -1,6 +1,7 @@
-import { Notice, setIcon } from "obsidian";
+import { Modal, Notice, setIcon } from "obsidian";
 import { RenderResult } from "../core/types";
 import { RenderService } from "../core/render-service";
+import { TikzHistoryEntry, TikzHistoryStore } from "../core/history";
 
 export class TikzRendererView {
   constructor(
@@ -9,6 +10,9 @@ export class TikzRendererView {
     private readonly source: string,
     private readonly service: RenderService,
     private readonly kind: RenderResult["kind"],
+    private readonly history: TikzHistoryStore,
+    private readonly historyKey: string,
+    private readonly editSource: (source: string) => Promise<void>,
   ) {}
 
   render(): void {
@@ -29,9 +33,7 @@ export class TikzRendererView {
     let zoom = 1;
     let x = 0;
     let y = 0;
-    const apply = (): void => {
-      img.style.transform = `translate3d(${x}px, ${y}px, 0) scale(${zoom})`;
-    };
+    const apply = (): void => { img.style.transform = `translate3d(${x}px, ${y}px, 0) scale(${zoom})`; };
 
     const panel = root.createDiv({ cls: "tikz-renderer-panel" });
     panel.hidden = true;
@@ -50,6 +52,8 @@ export class TikzRendererView {
       if (width > 0 && img.naturalWidth > 0) zoom = Math.min(1, width / img.naturalWidth);
       x = 0; y = 0; apply();
     });
+    button("Edit", () => new TikzSourceModal(this.source, async (next) => { await this.editSource(next); }).open());
+    button("History", () => this.showHistory(panel));
     button("Copy source", async () => { await navigator.clipboard.writeText(this.source); new Notice("TikZ source copied."); });
     button("Copy embed", async () => {
       await navigator.clipboard.writeText(`\`\`\`${this.kind}\n${this.source}\n\`\`\``);
@@ -74,10 +78,8 @@ export class TikzRendererView {
     let lastX = 0;
     let lastY = 0;
     viewport.addEventListener("pointerdown", (event) => {
-      dragging = true;
-      lastX = event.clientX; lastY = event.clientY;
-      viewport.classList.add("is-dragging");
-      viewport.setPointerCapture(event.pointerId);
+      dragging = true; lastX = event.clientX; lastY = event.clientY;
+      viewport.classList.add("is-dragging"); viewport.setPointerCapture(event.pointerId);
     });
     viewport.addEventListener("pointermove", (event) => {
       if (!dragging) return;
@@ -90,10 +92,49 @@ export class TikzRendererView {
     apply();
   }
 
+  private showHistory(panel: HTMLElement): void {
+    panel.empty();
+    const heading = panel.createDiv({ cls: "tikz-history-heading", text: "History" });
+    heading.createEl("button", { text: "Close", attr: { type: "button" } }).addEventListener("click", () => panel.empty());
+    const entries = this.history.list(this.historyKey);
+    if (entries.length === 0) { panel.createDiv({ text: "No previous versions yet." }); return; }
+    entries.forEach((entry, index) => {
+      const row = panel.createDiv({ cls: "tikz-history-row" });
+      row.createSpan({ text: `Version ${entries.length - index}` });
+      row.createSpan({ text: new Date(entry.timestamp).toLocaleString() });
+      if (entry.source !== this.source) {
+        row.createEl("button", { text: "Restore", attr: { type: "button" } }).addEventListener("click", () => {
+          new TikzSourceModal(entry.source, async (next) => { await this.editSource(next); }).open();
+        });
+      }
+    });
+  }
+
   private detectTheme(): string {
     const classes = document.body.classList;
     if (classes.contains("theme-dark")) return "dark";
     if (classes.contains("theme-light")) return "light";
     return "obsidian";
   }
+}
+
+class TikzSourceModal extends Modal {
+  constructor(private readonly initialSource: string, private readonly onRender: (source: string) => Promise<void>) { super(appFromModalContext()); }
+
+  onOpen(): void {
+    this.titleEl.setText("TikZ Source");
+    const editor = this.contentEl.createEl("textarea", { cls: "tikz-source-editor" });
+    editor.value = this.initialSource;
+    editor.spellcheck = false;
+    const actions = this.contentEl.createDiv({ cls: "tikz-source-actions" });
+    actions.createEl("button", { text: "Cancel", attr: { type: "button" } }).addEventListener("click", () => this.close());
+    actions.createEl("button", { text: "Render", attr: { type: "button" } }).addEventListener("click", async () => {
+      try { await this.onRender(editor.value); this.close(); } catch (error) { new Notice(error instanceof Error ? error.message : String(error), 8000); }
+    });
+    window.setTimeout(() => editor.focus(), 0);
+  }
+}
+
+function appFromModalContext(): never {
+  throw new Error("TikzSourceModal must be constructed with an Obsidian App.");
 }
