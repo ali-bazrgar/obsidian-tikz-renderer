@@ -33,10 +33,21 @@ export async function probeAllExecutables(paths: Partial<Record<TeXExecutableNam
   return Promise.all(NAMES.map((name) => probeExecutable(name, paths[name] ?? name)));
 }
 
+/**
+ * Accept either the TeX Live installation root (D:\\texlive\\2025) or its
+ * Windows binary directory (D:\\texlive\\2025\\bin\\windows). This keeps
+ * the setting forgiving while producing exactly one canonical executable path.
+ */
 export function texLiveExecutableCandidates(root: string): Partial<Record<TeXExecutableName, string>> {
-  const clean = root.trim();
+  const clean = path.normalize(root.trim().replace(/[\\/]+$/u, ""));
   if (!clean) return {};
-  const bin = path.join(clean, "bin", process.platform === "win32" ? "windows" : process.platform === "darwin" ? "universal-darwin" : "x86_64-linux");
+
+  const normalizedLower = clean.toLowerCase();
+  const binSuffix = path.join("bin", process.platform === "win32" ? "windows" : process.platform === "darwin" ? "universal-darwin" : "x86_64-linux").toLowerCase();
+  const bin = normalizedLower.endsWith(binSuffix)
+    ? clean
+    : path.join(clean, "bin", process.platform === "win32" ? "windows" : process.platform === "darwin" ? "universal-darwin" : "x86_64-linux");
+
   const suffix = process.platform === "win32" ? ".exe" : "";
   return Object.fromEntries(NAMES.map((name) => [name, path.join(bin, `${name}${suffix}`)])) as Partial<Record<TeXExecutableName, string>>;
 }
