@@ -17,9 +17,10 @@ export class TikzRendererView extends MarkdownRenderChild {
 
   render(): void {
     this.cleanup?.();
-    const previous = TikzRendererView.activeViews.get(this.historyKey);
+    const stateKey = `${this.sourcePath}::${this.historyKey}`;
+    const previous = TikzRendererView.activeViews.get(stateKey);
     if (previous && previous !== this) previous.dispose(false);
-    TikzRendererView.activeViews.set(this.historyKey, this);
+    TikzRendererView.activeViews.set(stateKey, this);
     TikzRendererView.allViews.add(this);
     this.containerEl.empty();
     const doc = this.containerEl.ownerDocument; const win = doc.defaultView;
@@ -33,7 +34,6 @@ export class TikzRendererView extends MarkdownRenderChild {
     const controls = shell.createDiv({ cls: "tikz-renderer-controls" });
     const menu = controls.createEl("button", { cls: "tikz-renderer-menu", text: "⋯", attr: { type: "button", title: "TikZ controls", "aria-label": "TikZ controls", "aria-expanded": "false" } });
     const panel = doc.body.createDiv({ cls: "tikz-renderer-panel" }); panel.hidden = true; panel.setAttribute("role", "menu"); panel.dataset.tikzPopup = "true";
-    const stateKey = this.historyKey;
     const persisted = TikzRendererView.viewStates.get(stateKey) ?? loadViewState(stateKey); if (persisted) TikzRendererView.viewStates.set(stateKey, persisted);
     let zoom = clampZoom(persisted?.zoom ?? this.getSettings().defaultZoom / 100), panX = persisted?.panX ?? 0, panY = persisted?.panY ?? 0;
     let naturalWidth = 0, naturalHeight = 0, dragging = false, lastX = 0, lastY = 0;
@@ -66,7 +66,7 @@ export class TikzRendererView extends MarkdownRenderChild {
     const resizeObserver = new ResizeObserver(() => positionPanel()); resizeObserver.observe(viewport);
     const reposition = (): void => positionPanel(); win?.addEventListener("scroll", reposition, true); win?.addEventListener("resize", reposition);
     buildMainPanel(); closePanel(); updateMode(); applyTheme(); ensureIntrinsicSize(); applyZoom();
-    this.cleanup = () => { persistViewState(); doc.removeEventListener("pointerdown", outsidePointerDown, true); doc.removeEventListener("keydown", escape, true); menu.removeEventListener("pointerdown", togglePanel); win?.removeEventListener("wheel", wheel, true); win?.removeEventListener("scroll", reposition, true); win?.removeEventListener("resize", reposition); observer.disconnect(); resizeObserver.disconnect(); closePanel(); panel.remove(); if (TikzRendererView.activeViews.get(this.historyKey) === this) TikzRendererView.activeViews.delete(this.historyKey); TikzRendererView.allViews.delete(this); this.cleanup = undefined; };
+    this.cleanup = () => { persistViewState(); doc.removeEventListener("pointerdown", outsidePointerDown, true); doc.removeEventListener("keydown", escape, true); menu.removeEventListener("pointerdown", togglePanel); win?.removeEventListener("wheel", wheel, true); win?.removeEventListener("scroll", reposition, true); win?.removeEventListener("resize", reposition); observer.disconnect(); resizeObserver.disconnect(); closePanel(); panel.remove(); if (TikzRendererView.activeViews.get(stateKey) === this) TikzRendererView.activeViews.delete(stateKey); TikzRendererView.allViews.delete(this); this.cleanup = undefined; };
   }
   onunload(): void { this.cleanup?.(); this.containerEl.empty(); }
   dispose(emptyContainer = true): void { this.cleanup?.(); if (emptyContainer && this.containerEl.isConnected) this.containerEl.empty(); }
