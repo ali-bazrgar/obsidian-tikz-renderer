@@ -27,9 +27,15 @@ if (!renderer.includes('`![[${path}]]`')) throw new Error("Renderer must expose 
 const livePreview = await readFile("src/editor/live-preview.ts", "utf8");
 if (livePreview.includes("svgDataUri") || livePreview.includes('createEl(\"img\"')) throw new Error("Live Preview must not rasterize TikZ SVG through an image data URI.");
 
+const processor = await readFile("src/markdown/code-block.ts", "utf8");
+if (!processor.includes("[[${assetPath}]]")) throw new Error("TikZ processor must create a real Obsidian wikilink for the generated SVG.");
+if (!processor.includes("ensureSourceAssetLink")) throw new Error("TikZ processor is missing source asset-link synchronization.");
+
 const css = await readFile("styles.css", "utf8");
 if (!css.includes('.tikz-renderer-panel[hidden]{display:none!important}')) throw new Error("CSS must force the popup to remain hidden until opened.");
-if (!css.includes('.tikz-renderer-panel{position:fixed')) throw new Error("Popup must use viewport positioning when opened.");
+if (!css.includes('.tikz-renderer-controls{position:absolute') || !css.includes('left:-28px')) throw new Error("TikZ controls must be attached outside the left edge of the figure.");
+if (!css.includes('.tikz-renderer-paper{position:relative;display:contents}')) throw new Error("The old visual paper layer must not create a second figure window.");
+if (!css.includes('.tikz-generated-asset-link{display:none!important}')) throw new Error("Generated SVG wikilinks must be hidden in Reading view.");
 
 const manifest = JSON.parse(await readFile("manifest.json", "utf8"));
 const packageJson = JSON.parse(await readFile("package.json", "utf8"));
@@ -38,4 +44,4 @@ if (manifest.version !== packageJson.version) throw new Error(`Version mismatch:
 const inputs = Object.keys(meta.inputs ?? {});
 console.log("Build artifacts verified.");
 console.log(`esbuild bundled inputs: ${inputs.length}`);
-console.log("Production bundle contains no private CodeMirror runtime, uses inline SVG, hides the popup by default, captures Ctrl+wheel before editor handlers, and persists SVG vault assets.");
+console.log("Verified: inline SVG, hidden popup startup, capture-phase Ctrl+wheel zoom, one visual figure layer, left-attached controls, and source-mode SVG wikilinks hidden in Reading view.");
