@@ -8,6 +8,7 @@ export interface TikzSettings {
   xelatexPath: string;
   lualatexPath: string;
   dvilualatexPath: string;
+  dvisvgmPath: string;
   mutoolPath: string;
   texLiveRoot: string;
   assetFolder: string;
