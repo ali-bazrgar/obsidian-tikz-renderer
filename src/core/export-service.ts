@@ -16,7 +16,7 @@ export class ExportService {
   async savePng(svg: string, hash: string, sourcePath?: string): Promise<string> {
     const folder = normalizePath(`${this.resolveAssetFolder(sourcePath)}/PNG`);
     await this.ensureVaultFolder(folder);
-    const relativePng = normalizePath(`${folder}/${hash}.png`);
+    const relativePng = await this.nextPngPath(folder, hash);
     const png = await svgToPng(svg, 1);
     await this.app.vault.adapter.writeBinary(relativePng, png);
     new Notice(`TikZ PNG saved: ${relativePng}`);
@@ -26,11 +26,22 @@ export class ExportService {
   async savePngSnapshot(svg: string, hash: string, sourcePath: string, viewportWidth: number, viewportHeight: number, zoom: number, panX: number, panY: number, backgroundColor: string): Promise<string> {
     const folder = normalizePath(`${this.resolveAssetFolder(sourcePath)}/PNG`);
     await this.ensureVaultFolder(folder);
-    const relativePng = normalizePath(`${folder}/${hash}.png`);
+    const relativePng = await this.nextPngPath(folder, hash);
     const png = await svgToPngSnapshot(svg, 1, viewportWidth, viewportHeight, zoom, panX, panY, backgroundColor);
     await this.app.vault.adapter.writeBinary(relativePng, png);
     new Notice(`TikZ PNG saved: ${relativePng}`);
     return relativePng;
+  }
+
+  private async nextPngPath(folder: string, hash: string): Promise<string> {
+    const base = normalizePath(`${folder}/${hash}`);
+    let index = 1;
+    let candidate = normalizePath(`${base}.png`);
+    while (await this.app.vault.adapter.exists(candidate)) {
+      candidate = normalizePath(`${base}-${index}.png`);
+      index += 1;
+    }
+    return candidate;
   }
 
   private resolveAssetFolder(sourcePath?: string): string {
@@ -58,8 +69,8 @@ async function svgToPng(svg: string, scale: number): Promise<ArrayBuffer> {
   const url = URL.createObjectURL(blob);
   try {
     const image = await loadSvgImage(url);
-    const intrinsicWidth = image.naturalWidth || parseSvgDimension(svg, "width") || 800;
-    const intrinsicHeight = image.naturalHeight || parseSvgDimension(svg, "height") || 600;
+    const intrinsicWidth = getSvgWidth(svg, image);
+    const intrinsicHeight = getSvgHeight(svg, image);
     const canvas = document.createElement("canvas");
     canvas.width = Math.max(1, Math.min(8192, Math.ceil(intrinsicWidth * scale)));
     canvas.height = Math.max(1, Math.min(8192, Math.ceil(intrinsicHeight * scale)));
@@ -80,8 +91,11 @@ async function svgToPngSnapshot(svg: string, scale: number, viewportWidth: numbe
   const url = URL.createObjectURL(blob);
   try {
     const image = await loadSvgImage(url);
-    const intrinsicWidth = image.naturalWidth || parseSvgDimension(svg, "width") || 800;
-    const intrinsicHeight = image.naturalHeight || parseSvgDimension(svg, "height") || 600;
+    // The renderer's live geometry is based on SVG viewBox dimensions first.
+    // Use the same source of truth here so the rasterized pixels use exactly
+    // the same coordinate system as the on-screen SVG.
+    const intrinsicWidth = getSvgWidth(svg, image);
+    const intrinsicHeight = getSvgHeight(svg, image);
     const width = Math.max(1, Math.min(8192, Math.ceil(viewportWidth * scale)));
     const height = Math.max(1, Math.min(8192, Math.ceil(viewportHeight * scale)));
     const canvas = document.createElement("canvas");
@@ -122,6 +136,24 @@ function canvasToPng(canvas: HTMLCanvasElement): Promise<ArrayBuffer> {
       resolve(await value.arrayBuffer());
     }, "image/png");
   });
+}
+
+function getSvgWidth(svg: string, image: HTMLImageElement): number {
+  const viewBox = parseSvgViewBox(svg);
+  return viewBox?.width || image.naturalWidth || parseSvgDimension(svg, "width") || 800;
+}
+
+function getSvgHeight(svg: string, image: HTMLImageElement): number {
+  const viewBox = parseSvgViewBox(svg);
+  return viewBox?.height || image.naturalHeight || parseSvgDimension(svg, "height") || 600;
+}
+
+function parseSvgViewBox(svg: string): { width: number; height: number } | undefined {
+  const match = /\bviewBox=["']\s*[-+0-9.eE]+\s+[-+0-9.eE]+\s+([-+0-9.eE]+)\s+([-+0-9.eE]+)\s*["']/u.exec(svg);
+  if (!match) return undefined;
+  const width = Number(match[1]);
+  const height = Number(match[2]);
+  return Number.isFinite(width) && width > 0 && Number.isFinite(height) && height > 0 ? { width, height } : undefined;
 }
 
 function parseSvgDimension(svg: string, name: "width" | "height"): number | undefined {
