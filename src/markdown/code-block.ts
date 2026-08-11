@@ -43,9 +43,7 @@ export class TikzMarkdownProcessor {
 
 function scheduleGeneratedLinks(el: HTMLElement, assetPath: string, historyKey: string, edit: () => Promise<void>): void {
   if (!assetPath) return;
-  const mark = (): void => {
-    if (el.isConnected) markGeneratedLinks(el, assetPath, historyKey, edit);
-  };
+  const mark = (): void => { if (el.isConnected) markGeneratedLinks(el, assetPath, historyKey, edit); };
   window.setTimeout(mark, 0);
   window.requestAnimationFrame(mark);
 }
@@ -59,7 +57,6 @@ function markGeneratedLinks(el: HTMLElement, assetPath: string, historyKey: stri
     return href === normalizedPath || href.endsWith(`/${normalizedPath}`);
   });
   if (generated) generated.classList.add(GENERATED_ASSET_CLASS);
-
   const candidate = links.find((link) => link.getAttribute("href") === `#tikz-edit:${historyKey}`);
   if (!candidate || candidate.classList.contains(GENERATED_EDIT_CLASS)) return;
   candidate.classList.add(GENERATED_EDIT_CLASS);
@@ -78,15 +75,32 @@ async function ensureSourceAssetLinks(app: App, sourcePath: string, section: Mar
   const editLink = `[✎ Edit TikZ](#tikz-edit:${historyKey})`;
   await app.vault.process(file, (data) => {
     const insertionOffset = findNthLineOffset(data, section.lineEnd + 1);
-    const before = data.slice(Math.max(0, insertionOffset - 1000), insertionOffset);
-    const after = data.slice(insertionOffset, Math.min(data.length, insertionOffset + 1000));
-    const hasAsset = before.includes(wikilink) || after.startsWith(wikilink);
-    const hasEdit = before.includes(editLink) || after.startsWith(editLink);
-    if (hasAsset && hasEdit) return data;
     const eol = data.includes("\r\n") ? "\r\n" : "\n";
-    const additions = `${hasAsset ? "" : wikilink + eol}${hasEdit ? "" : editLink + eol}`;
-    return `${data.slice(0, insertionOffset)}${additions}${data.slice(insertionOffset)}`;
+    const lines = data.split(/\r?\n/u);
+    let insertionLine = lineIndexAtOffset(data, insertionOffset);
+
+    // Remove only the generated-link run belonging immediately after this code block.
+    // This makes repeated Live Preview/PostProcessor passes idempotent and prevents link multiplication.
+    while (insertionLine < lines.length) {
+      const line = lines[insertionLine].trim();
+      if (line === wikilink || line === editLink) {
+        lines.splice(insertionLine, 1);
+        continue;
+      }
+      if (line === "") { insertionLine += 1; continue; }
+      break;
+    }
+
+    const additions = [editLink, wikilink];
+    lines.splice(insertionLine, 0, ...additions);
+    return lines.join(eol);
   });
+}
+
+function lineIndexAtOffset(text: string, offset: number): number {
+  let line = 0;
+  for (let index = 0; index < offset && index < text.length; index += 1) if (text[index] === "\n") line += 1;
+  return line;
 }
 
 function makeHistoryKey(ctx: MarkdownPostProcessorContext, section: MarkdownSectionInformation | null, kind: BlockKind, source: string): string {
