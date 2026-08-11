@@ -6,6 +6,8 @@ import { TikzHistoryStore } from "../core/history";
 import { DisplayTheme, TikzSettings } from "../settings/settings";
 
 export class TikzRendererView {
+  private cleanup: (() => void) | undefined;
+
   constructor(
     private readonly app: App,
     private readonly exportService: ExportService,
@@ -23,13 +25,12 @@ export class TikzRendererView {
   ) {}
 
   render(): void {
+    this.cleanup?.();
+    this.cleanup = undefined;
     this.host.empty();
     const shell = this.host.createDiv({ cls: "tikz-renderer-shell" });
     const controls = shell.createDiv({ cls: "tikz-renderer-controls" });
-    const menu = controls.createEl("button", {
-      cls: "tikz-renderer-menu",
-      attr: { "aria-label": "TikZ controls", "aria-expanded": "false", type: "button", title: "TikZ controls" },
-    });
+    const menu = controls.createEl("button", { cls: "tikz-renderer-menu", attr: { "aria-label": "TikZ controls", "aria-expanded": "false", type: "button", title: "TikZ controls" } });
     menu.textContent = "⋯";
 
     const panel = shell.createDiv({ cls: "tikz-renderer-panel" });
@@ -38,20 +39,15 @@ export class TikzRendererView {
 
     const paper = shell.createDiv({ cls: "tikz-renderer-paper" });
     const viewport = paper.createDiv({ cls: "tikz-renderer-viewport" });
-    const assetLink = viewport.createEl("a", {
-      cls: "tikz-renderer-asset-link",
-      attr: { href: "#", "aria-label": "Open TikZ SVG asset", title: "Open rendered SVG" },
-    });
-    const img = assetLink.createEl("img", {
-      cls: "tikz-renderer-svg",
-      attr: { alt: "TikZ diagram", draggable: "false" },
-    });
+    const assetLink = viewport.createEl("a", { cls: "tikz-renderer-asset-link", attr: { href: "#", "aria-label": "Open TikZ SVG asset", title: "Open rendered SVG" } });
+    const img = assetLink.createEl("img", { cls: "tikz-renderer-svg", attr: { alt: "TikZ diagram", draggable: "false" } });
     img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(this.result.svg)}`;
-    assetLink.addEventListener("click", (event) => {
+    const openAsset = (event: Event): void => {
       event.preventDefault();
       event.stopPropagation();
       if (this.result.assetPath) this.app.workspace.openLinkText(this.result.assetPath, this.sourcePath, false);
-    });
+    };
+    assetLink.addEventListener("click", openAsset);
 
     let zoom = Math.min(5, Math.max(0.25, this.getSettings().defaultZoom / 100));
     let x = 0;
@@ -59,8 +55,6 @@ export class TikzRendererView {
     let dragging = false;
     let lastX = 0;
     let lastY = 0;
-    let panStartX = 0;
-    let panStartY = 0;
 
     const clampZoom = (value: number): number => Math.min(5, Math.max(0.25, value));
     const apply = (): void => {
@@ -68,45 +62,35 @@ export class TikzRendererView {
       img.dataset.zoom = `${Math.round(zoom * 100)}%`;
       viewport.classList.toggle("is-pannable", zoom > 1);
     };
-    const resetView = (): void => {
-      zoom = Math.min(5, Math.max(0.25, this.getSettings().defaultZoom / 100));
-      x = 0;
-      y = 0;
-      apply();
-    };
+    const resetView = (): void => { zoom = Math.min(5, Math.max(0.25, this.getSettings().defaultZoom / 100)); x = 0; y = 0; apply(); };
     const fit = (): void => {
       const availableWidth = Math.max(1, viewport.clientWidth - 20);
       const availableHeight = Math.max(1, viewport.clientHeight - 20);
-      if (img.naturalWidth > 0 && img.naturalHeight > 0) {
-        zoom = clampZoom(Math.min(1, availableWidth / img.naturalWidth, availableHeight / img.naturalHeight));
-      } else zoom = 1;
+      zoom = img.naturalWidth > 0 && img.naturalHeight > 0 ? clampZoom(Math.min(1, availableWidth / img.naturalWidth, availableHeight / img.naturalHeight)) : 1;
       x = 0;
       y = 0;
       apply();
     };
 
-    const closePanel = (): void => {
-      panel.hidden = true;
-      menu.setAttribute("aria-expanded", "false");
-    };
-    menu.addEventListener("click", (event) => {
+    const closePanel = (): void => { panel.hidden = true; menu.setAttribute("aria-expanded", "false"); };
+    const togglePanel = (event: Event): void => {
       event.preventDefault();
       event.stopPropagation();
       panel.hidden = !panel.hidden;
       menu.setAttribute("aria-expanded", `${!panel.hidden}`);
-    });
-    document.addEventListener("click", (event) => {
+    };
+    menu.addEventListener("click", togglePanel);
+
+    const ownerDocument = this.host.ownerDocument;
+    const outsideClick = (event: MouseEvent): void => {
       if (panel.hidden || panel.contains(event.target as Node) || menu.contains(event.target as Node)) return;
       closePanel();
-    }, { capture: true });
+    };
+    ownerDocument.addEventListener("click", outsideClick, true);
 
     const addButton = (label: string, action: () => void | Promise<void>): HTMLButtonElement => {
       const button = panel.createEl("button", { text: label, attr: { type: "button", role: "menuitem" } });
-      button.addEventListener("click", (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        void action();
-      });
+      button.addEventListener("click", (event) => { event.preventDefault(); event.stopPropagation(); void action(); });
       return button;
     };
 
@@ -124,11 +108,10 @@ export class TikzRendererView {
         this.result.hash = next.hash;
         this.result.engine = next.engine;
         this.result.fromCache = next.fromCache;
+        this.result.assetPath = await this.exportService.saveSvg(next.svg, next.hash, this.sourcePath, false);
         closePanel();
         this.render();
-      } catch (error) {
-        new Notice(error instanceof Error ? error.message : String(error), 8000);
-      }
+      } catch (error) { new Notice(error instanceof Error ? error.message : String(error), 8000); }
     });
     addButton("Copy source", async () => { await navigator.clipboard.writeText(this.source); new Notice("TikZ source copied."); });
     addButton("Copy embed", async () => { await navigator.clipboard.writeText(`\`\`\`${this.kind}\n${this.source}\n\`\`\``); new Notice("TikZ embed copied."); });
@@ -147,10 +130,8 @@ export class TikzRendererView {
     });
 
     viewport.addEventListener("pointerdown", (event) => {
-      if (event.button !== 0 || zoom <= 1 || (event.target as HTMLElement).closest("a") === null) return;
+      if (event.button !== 0 || zoom <= 1) return;
       dragging = true;
-      panStartX = x;
-      panStartY = y;
       lastX = event.clientX;
       lastY = event.clientY;
       viewport.classList.add("is-dragging");
@@ -166,19 +147,12 @@ export class TikzRendererView {
       apply();
       event.preventDefault();
     });
-    const stopDragging = (): void => {
-      if (!dragging) return;
-      dragging = false;
-      viewport.classList.remove("is-dragging");
-      if (Math.abs(x - panStartX) < 3 && Math.abs(y - panStartY) < 3 && this.result.assetPath) {
-        this.app.workspace.openLinkText(this.result.assetPath, this.sourcePath, false);
-      }
-    };
+    const stopDragging = (): void => { dragging = false; viewport.classList.remove("is-dragging"); };
     viewport.addEventListener("pointerup", stopDragging);
     viewport.addEventListener("pointercancel", stopDragging);
     viewport.addEventListener("lostpointercapture", stopDragging);
 
-    viewport.addEventListener("wheel", (event) => {
+    const wheel = (event: WheelEvent): void => {
       const nextZoom = clampZoom(zoom * (event.deltaY < 0 ? 1.12 : 1 / 1.12));
       if (nextZoom === zoom) return;
       const rect = viewport.getBoundingClientRect();
@@ -190,48 +164,41 @@ export class TikzRendererView {
       zoom = nextZoom;
       apply();
       event.preventDefault();
-    }, { passive: false });
-
+    };
+    viewport.addEventListener("wheel", wheel, { passive: false });
     img.addEventListener("load", () => { if (zoom === 1) fit(); }, { once: true });
+
     this.applyTheme(shell);
-    this.installThemeObserver(shell);
+    const observer = this.installThemeObserver(shell);
     apply();
+
+    this.cleanup = () => {
+      ownerDocument.removeEventListener("click", outsideClick, true);
+      observer?.disconnect();
+      this.cleanup = undefined;
+    };
   }
 
   private renderThemeMenu(panel: HTMLElement, closePanel: () => void): void {
     panel.empty();
-    const title = panel.createDiv({ cls: "tikz-renderer-panel-title", text: "Theme" });
-    title.setAttribute("role", "heading");
-    const themes: Array<[DisplayTheme, string]> = [
-      ["auto", "Auto"], ["obsidian", "Obsidian"], ["light", "Light"], ["paper", "Paper"],
-      ["dark", "Dark"], ["contrast", "Contrast"], ["bw", "Black & white"], ["custom", "Custom"],
-    ];
+    panel.createDiv({ cls: "tikz-renderer-panel-title", text: "Theme" });
+    const themes: Array<[DisplayTheme, string]> = [["auto", "Auto"], ["obsidian", "Obsidian"], ["light", "Light"], ["paper", "Paper"], ["dark", "Dark"], ["contrast", "Contrast"], ["bw", "Black & white"], ["custom", "Custom"]];
     for (const [theme, label] of themes) {
       const button = panel.createEl("button", { text: label, attr: { type: "button", role: "menuitemradio", "aria-checked": `${this.getSettings().displayTheme === theme}` } });
       button.addEventListener("click", async (event) => {
         event.preventDefault();
         event.stopPropagation();
-        const settings = { ...this.getSettings(), displayTheme: theme };
-        await this.saveSettings(settings);
+        await this.saveSettings({ ...this.getSettings(), displayTheme: theme });
         closePanel();
         this.render();
       });
     }
-    const custom = this.getSettings();
-    if (custom.displayTheme === "custom") {
-      const color = panel.createEl("input", { attr: { type: "color", value: custom.customBackgroundColor, "aria-label": "Custom background color" } });
-      color.addEventListener("change", async () => {
-        await this.saveSettings({ ...this.getSettings(), customBackgroundColor: color.value });
-        this.applyTheme(this.host);
-      });
-      const opacity = panel.createEl("input", { attr: { type: "range", min: "10", max: "100", step: "1", value: `${custom.customBackgroundOpacity}`, "aria-label": "Custom background opacity" } });
-      opacity.addEventListener("input", () => {
-        const value = Number(opacity.value);
-        this.host.style.setProperty("--tikz-custom-bg-opacity", `${value / 100}`);
-      });
-      opacity.addEventListener("change", async () => {
-        await this.saveSettings({ ...this.getSettings(), customBackgroundOpacity: Number(opacity.value) });
-      });
+    if (this.getSettings().displayTheme === "custom") {
+      const color = panel.createEl("input", { attr: { type: "color", value: this.getSettings().customBackgroundColor, "aria-label": "Custom background color" } });
+      color.addEventListener("change", async () => { await this.saveSettings({ ...this.getSettings(), customBackgroundColor: color.value }); this.applyTheme(this.host); });
+      const opacity = panel.createEl("input", { attr: { type: "range", min: "10", max: "100", step: "1", value: `${this.getSettings().customBackgroundOpacity}`, "aria-label": "Custom background opacity" } });
+      opacity.addEventListener("input", () => this.host.style.setProperty("--tikz-custom-bg-opacity", `${Number(opacity.value) / 100}`));
+      opacity.addEventListener("change", async () => { await this.saveSettings({ ...this.getSettings(), customBackgroundOpacity: Number(opacity.value) }); });
     }
   }
 
@@ -248,21 +215,17 @@ export class TikzRendererView {
     }
   }
 
-  private installThemeObserver(element: HTMLElement): void {
-    if (this.getSettings().displayTheme !== "auto") return;
-    const documentRoot = this.host.ownerDocument.documentElement;
+  private installThemeObserver(element: HTMLElement): MutationObserver | undefined {
+    if (this.getSettings().displayTheme !== "auto") return undefined;
     const observer = new MutationObserver(() => this.applyTheme(element));
-    observer.observe(documentRoot, { attributes: true, attributeFilter: ["class"] });
-    this.host.addEventListener("DOMNodeRemoved", () => observer.disconnect(), { once: true });
+    observer.observe(this.host.ownerDocument.documentElement, { attributes: true, attributeFilter: ["class"] });
+    return observer;
   }
 
   private showAssetLink(panel: HTMLElement, type: string, path: string): void {
     const links = panel.createDiv({ cls: "tikz-renderer-asset-links" });
     const link = links.createEl("a", { text: `${type}: ${path}`, attr: { href: "#" } });
-    link.addEventListener("click", (event) => {
-      event.preventDefault();
-      this.app.workspace.openLinkText(path, this.sourcePath, false);
-    });
+    link.addEventListener("click", (event) => { event.preventDefault(); this.app.workspace.openLinkText(path, this.sourcePath, false); });
   }
 
   private showHistory(panel: HTMLElement): void {
