@@ -20,6 +20,8 @@ const renderer = await readFile("src/ui/renderer-view.ts", "utf8");
 if (!renderer.includes('parseFromString(this.result.svg, "image/svg+xml")')) throw new Error("Reading-mode renderer is not using inline SVG DOM rendering.");
 if (renderer.includes("svgDataUri") || renderer.includes("src: svgDataUri")) throw new Error("Reading-mode renderer must not use SVG data-URI images.");
 if (!renderer.includes("panel.hidden = true")) throw new Error("TikZ settings panel is not hidden during initial render.");
+if (!renderer.includes('menu.addEventListener("pointerdown", togglePanel)')) throw new Error("TikZ popup toggle must use a reliable pointer event.");
+if (!renderer.includes('menu.addEventListener("keydown"')) throw new Error("TikZ popup toggle must remain keyboard accessible.");
 if (!renderer.includes('win?.addEventListener("wheel", wheel, { passive: false, capture: true })')) throw new Error("Ctrl+wheel zoom must be registered at window capture level.");
 if (!renderer.includes("this.result.assetPath = await this.exportService.saveSvg")) throw new Error("Every rendered TikZ result must persist an SVG asset in the vault.");
 if (!/svg\.addEventListener\("click",\s*e\s*=>\s*\{\s*e\.preventDefault\(\);\s*e\.stopPropagation\(\);\s*\}\)/.test(renderer)) throw new Error("The inline SVG must not behave as the generated asset link.");
@@ -39,8 +41,11 @@ if (!mainSource.includes("link.dataset.tikzGenerated")) throw new Error("Generat
 const css = await readFile("styles.css", "utf8");
 const compactCss = css.replace(/\s+/g, "");
 if (!compactCss.includes('.tikz-renderer-panel[hidden]{display:none!important}')) throw new Error("CSS must force the popup to remain hidden until opened.");
+if (css.includes(".tikz-renderer-panel{position:fixed") && css.includes("contain:layout style")) throw new Error("The fixed popup must not establish a nested containing block.");
 if (!compactCss.includes('.tikz-renderer-controls{position:absolute') || !compactCss.includes('left:-28px')) throw new Error("TikZ controls must be attached outside the left edge of the figure.");
 if (!compactCss.includes('.tikz-renderer-paper{position:relative;display:contents}')) throw new Error("The old visual paper layer must not create a second figure window.");
+if (!css.includes('.tikz-renderer-shell{') || !css.includes('background:var(--tikz-figure-bg)')) throw new Error("Theme background must be applied to the figure shell only.");
+if (!css.includes('.tikz-renderer-shell:not([data-theme="custom"]) .tikz-renderer-svg')) throw new Error("Custom theme must preserve the SVG's original black colors.");
 if (!css.includes('.markdown-preview-view .tikz-generated-asset-link{display:none!important')) throw new Error("Generated SVG wikilinks must be hidden only in Reading view.");
 if (!css.includes('.markdown-preview-view .tikz-generated-edit-link{display:none!important')) throw new Error("Generated Edit links must be hidden only in Reading view.");
 if (!css.includes('.markdown-source-view .tikz-renderer-controls{display:flex!important')) throw new Error("Writing-view TikZ controls must remain visible.");
@@ -54,4 +59,4 @@ if (manifest.version !== packageJson.version) throw new Error(`Version mismatch:
 const inputs = Object.keys(meta.inputs ?? {});
 console.log("Build artifacts verified.");
 console.log(`esbuild bundled inputs: ${inputs.length}`);
-console.log("Verified: inline SVG, hidden popup startup, capture-phase Ctrl+wheel zoom, one visual figure layer, left-attached controls, non-clickable figure, idempotent generated links, delayed DOM marking, and Reading-view-only generated-link hiding.");
+console.log("Verified: inline SVG, hidden popup startup, reliable popup toggle, capture-phase Ctrl+wheel zoom, one visual figure layer, left-attached controls, non-clickable figure, custom-theme SVG preservation, idempotent generated links, delayed DOM marking, and Reading-view-only generated-link hiding.");
