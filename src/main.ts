@@ -11,7 +11,7 @@ import { TikzRendererView } from "./ui/renderer-view";
 const LANGUAGES: BlockKind[] = ["tikz", "pgfplots", "circuitikz", "tex", "latex"];
 const GENERATED_ASSET_CLASS = "tikz-generated-asset-link";
 const GENERATED_EDIT_CLASS = "tikz-generated-edit-link";
-const SETTINGS_MIGRATION_VERSION = 4;
+const SETTINGS_MIGRATION_VERSION = 5;
 
 export default class TikzRendererPlugin extends Plugin {
   settings!: TikzSettings;
@@ -85,8 +85,6 @@ export default class TikzRendererPlugin extends Plugin {
     }
 
     if (migrationVersion < SETTINGS_MIGRATION_VERSION) {
-      // Remove stale compiler/preamble state from the pre-resolver pipeline.
-      // UI preferences and the user's asset/history locations are preserved.
       merged.engine = DEFAULT_SETTINGS.engine;
       merged.latexPath = DEFAULT_SETTINGS.latexPath;
       merged.pdflatexPath = DEFAULT_SETTINGS.pdflatexPath;
@@ -116,9 +114,7 @@ export default class TikzRendererPlugin extends Plugin {
     try {
       const fs = await import("node:fs/promises");
       await fs.rm(cachePath, { recursive: true, force: true });
-    } catch {
-      // Cache cleanup must never prevent the plugin from loading.
-    }
+    } catch {}
   }
 
   async saveSettings(settings?: TikzSettings): Promise<void> { if (settings) this.settings = settings; await this.saveData(this.settings); this.syncRenderedTheme(); }
@@ -159,16 +155,16 @@ class TikzSettingTab extends PluginSettingTab {
     this.detectionContainer = container.createDiv({ cls: "tikz-detection-results" }); this.renderDetectionResults([]);
     const paths: Array<[keyof TikzSettings, string]> = [["latexPath", "latex path"], ["pdflatexPath", "pdflatex path"], ["xelatexPath", "xelatex path"], ["lualatexPath", "lualatex path"], ["dvilualatexPath", "dvilualatex path"], ["dvisvgmPath", "dvisvgm path"], ["mutoolPath", "mutool path"]];
     for (const [key, name] of paths) new Setting(container).setName(name).addText((text) => text.setValue(String(this.plugin.settings[key])).onChange(async (value) => this.plugin.saveSettings({ ...this.plugin.settings, [key]: value.trim() })));
-    new Setting(container).setName("Asset folder").addText((text) => text.setValue(this.plugin.settings.assetFolder).onChange(async (value) => this.plugin.saveSettings({ ...this.plugin.settings, assetFolder: normalizePath(value.trim()) })));
-    new Setting(container).setName("Cache folder").addText((text) => text.setValue(this.plugin.settings.cacheFolder).onChange(async (value) => this.plugin.saveSettings({ ...this.plugin.settings, cacheFolder: normalizePath(value.trim()) })));
-    new Setting(container).setName("Compile timeout (ms)").addText((text) => text.setValue(String(this.plugin.settings.compileTimeout)).onChange(async (value) => this.plugin.saveSettings({ ...this.plugin.settings, compileTimeout: Math.max(5000, Math.min(120000, Number(value) || 30000)) })));
-    new Setting(container).setName("Default zoom").addSlider((slider) => slider.setLimits(25, 500, 25).setValue(this.plugin.settings.defaultZoom).setDynamicTooltip().onChange(async (value) => this.plugin.saveSettings({ ...this.plugin.settings, defaultZoom: value })));
-    new Setting(container).setName("Display theme").setDesc("Changes the figure background only; TikZ source and SVG colors are never rewritten.").addDropdown((dropdown) => dropdown.addOptions({ auto: "Auto", obsidian: "Obsidian", light: "Light", paper: "Paper", dark: "Dark", contrast: "Contrast", bw: "Black & white", custom: "Custom" }).setValue(this.plugin.settings.displayTheme).onChange(async (value) => this.plugin.saveSettings({ ...this.plugin.settings, displayTheme: value as TikzSettings["displayTheme"] })));
-    new Setting(container).setName("Custom background").addColorPicker((picker) => picker.setValue(this.plugin.settings.customBackgroundColor).onChange(async (value) => this.plugin.saveSettings({ ...this.plugin.settings, customBackgroundColor: value })));
-    new Setting(container).setName("Custom background opacity").addSlider((slider) => slider.setLimits(10, 100, 1).setValue(this.plugin.settings.customBackgroundOpacity).setDynamicTooltip().onChange(async (value) => this.plugin.saveSettings({ ...this.plugin.settings, customBackgroundOpacity: value })));
-    new Setting(container).setName("Keep TeX source").addToggle((toggle) => toggle.setValue(this.plugin.settings.keepTexSource).onChange(async (value) => this.plugin.saveSettings({ ...this.plugin.settings, keepTexSource: value })));
-    new Setting(container).setName("Persian font").addText((text) => text.setValue(this.plugin.settings.persianFont).onChange(async (value) => this.plugin.saveSettings({ ...this.plugin.settings, persianFont: value.trim() })));
-    new Setting(container).setName("History limit").addSlider((slider) => slider.setLimits(1, 100, 1).setValue(this.plugin.settings.historyLimit).setDynamicTooltip().onChange(async (value) => this.plugin.saveSettings({ ...this.plugin.settings, historyLimit: value })));
+    new Setting(container).setName("Asset folder").addText((text) => text.setValue(this.plugin.settings.assetFolder).onChange(async (value) => this.plugin.saveSettings({ ...this.plugin.settings, assetFolder: normalizePath(value.trim()) }));
+    new Setting(container).setName("Cache folder").addText((text) => text.setValue(this.plugin.settings.cacheFolder).onChange(async (value) => this.plugin.saveSettings({ ...this.plugin.settings, cacheFolder: normalizePath(value.trim()) }));
+    new Setting(container).setName("Compile timeout (ms)").setDesc("Maximum time for one TeX/vector conversion process.").addText((text) => text.setValue(String(this.plugin.settings.compileTimeout)).onChange(async (value) => this.plugin.saveSettings({ ...this.plugin.settings, compileTimeout: Math.max(5000, Math.min(120000, Number(value) || 120000)) }));
+    new Setting(container).setName("Default zoom").addSlider((slider) => slider.setLimits(25, 500, 25).setValue(this.plugin.settings.defaultZoom).setDynamicTooltip().onChange(async (value) => this.plugin.saveSettings({ ...this.plugin.settings, defaultZoom: value }));
+    new Setting(container).setName("Display theme").setDesc("Changes the figure background only; TikZ source and SVG colors are never rewritten.").addDropdown((dropdown) => dropdown.addOptions({ auto: "Auto", obsidian: "Obsidian", light: "Light", paper: "Paper", dark: "Dark", contrast: "Contrast", bw: "Black & white", custom: "Custom" }).setValue(this.plugin.settings.displayTheme).onChange(async (value) => this.plugin.saveSettings({ ...this.plugin.settings, displayTheme: value as TikzSettings["displayTheme"] }));
+    new Setting(container).setName("Custom background").addColorPicker((picker) => picker.setValue(this.plugin.settings.customBackgroundColor).onChange(async (value) => this.plugin.saveSettings({ ...this.plugin.settings, customBackgroundColor: value }));
+    new Setting(container).setName("Custom background opacity").addSlider((slider) => slider.setLimits(10, 100, 1).setValue(this.plugin.settings.customBackgroundOpacity).setDynamicTooltip().onChange(async (value) => this.plugin.saveSettings({ ...this.plugin.settings, customBackgroundOpacity: value }));
+    new Setting(container).setName("Keep TeX source").addToggle((toggle) => toggle.setValue(this.plugin.settings.keepTexSource).onChange(async (value) => this.plugin.saveSettings({ ...this.plugin.settings, keepTexSource: value }));
+    new Setting(container).setName("Persian font").addText((text) => text.setValue(this.plugin.settings.persianFont).onChange(async (value) => this.plugin.saveSettings({ ...this.plugin.settings, persianFont: value.trim() }));
+    new Setting(container).setName("History limit").addSlider((slider) => slider.setLimits(1, 100, 1).setValue(this.plugin.settings.historyLimit).setDynamicTooltip().onChange(async (value) => this.plugin.saveSettings({ ...this.plugin.settings, historyLimit: value }));
     new Setting(container).setName("Preamble").addTextArea((text) => { text.setValue(this.plugin.settings.preamble).onChange(async (value) => this.plugin.saveSettings({ ...this.plugin.settings, preamble: value })); text.inputEl.rows = 18; text.inputEl.cols = 80; });
   }
   private renderDetectionResults(results: ExecutableProbe[]): void { const container = this.detectionContainer; if (!container) return; container.empty(); for (const result of results) { const row = container.createDiv({ cls: result.ok ? "tikz-detection-ok" : "tikz-detection-failed" }); row.createSpan({ text: `${result.ok ? "✓" : "✗"} ${result.name}: ${result.ok ? "OK" : "FAILED"}` }); row.createEl("small", { text: result.ok ? `${result.configuredPath}${result.version ? ` — ${result.version}` : ""}` : (result.error ?? "Unknown error") }); } }
