@@ -8,7 +8,6 @@ export interface TikzSettings {
   xelatexPath: string;
   lualatexPath: string;
   dvilualatexPath: string;
-  dvisvgmPath: string;
   mutoolPath: string;
   texLiveRoot: string;
   assetFolder: string;
@@ -24,6 +23,10 @@ export interface TikzSettings {
   historyLimit: number;
 }
 
+// Keep the default preamble deliberately small. Optional packages and TikZ
+// libraries are added by augmentPreamble() when the source actually needs them.
+// This avoids making every tiny TikZ block load pgfplots, circuitikz, forest,
+// smartdiagram, pgfgantt, and dozens of libraries before compilation starts.
 export const DEFAULT_PREAMBLE = String.raw`\usepackage{amsmath}
 \usepackage{amssymb}
 \usepackage{amsfonts}
@@ -31,23 +34,7 @@ export const DEFAULT_PREAMBLE = String.raw`\usepackage{amsmath}
 \usepackage{bm}
 \usepackage{xcolor}
 \usepackage{graphicx}
-\usepackage{booktabs}
-\usepackage{array}
-\usepackage{multirow}
-\usepackage{tabularx}
-\usepackage{longtable}
-\usepackage{siunitx}
-\usepackage{enumitem}
-\usepackage{tikz}
-\usepackage{pgfplots}
-\usepackage{circuitikz}
-\usepackage{tikz-cd}
-\usepackage{forest}
-\usepackage{smartdiagram}
-\usepackage{pgf-pie}
-\usepackage{pgfgantt}
-\pgfplotsset{compat=1.18}
-\usetikzlibrary{arrows,arrows.meta,automata,backgrounds,calc,chains,circuits,decorations,decorations.markings,decorations.pathmorphing,decorations.pathreplacing,er,fadings,fit,graphs,intersections,matrix,mindmap,patterns,positioning,quotes,scopes,shapes,shapes.arrows,shapes.callouts,shapes.geometric,shapes.misc,shapes.multipart,shadows,spy,through,trees,angles,babel,3d}`;
+\usepackage{tikz}`;
 
 export const DEFAULT_SETTINGS: TikzSettings = {
   engine: "auto",
