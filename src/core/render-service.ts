@@ -8,9 +8,10 @@ import { Engine, TikzSettings } from "../settings/settings";
 import { BlockKind, EnginePlan, RenderResult } from "./types";
 import { ConcurrencyLimiter } from "./concurrency";
 import { probeAllExecutables, TeXExecutableName, texLiveExecutableCandidates } from "./executable-detector";
+import { augmentPreamble } from "./tex-package-detector";
 
 const execFileAsync = promisify(execFile);
-const PIPELINE_VERSION = "8-xdv-no-gs-pdf";
+const PIPELINE_VERSION = "9-auto-tex-packages";
 const MAX_OUTPUT = 4 * 1024 * 1024;
 
 export class RenderError extends Error {
@@ -95,14 +96,9 @@ export class RenderService {
     const output = path.join(work, "main.svg");
 
     if (outputType === "pdf") {
-      // dvisvgm's PDF mode depends on Ghostscript <10.01 or its mutool-based
-      // handler. Calling mutool directly is deterministic and avoids the
-      // Ghostscript 10.x compatibility trap entirely when MuPDF is installed.
       const mutool = settings.mutoolPath.trim() || "mutool";
       await this.run(mutool, ["draw", "-q", "-o", output, input, "1"], work, settings.compileTimeout);
     } else {
-      // DVI and XeTeX XDV are natively supported by dvisvgm and do not invoke
-      // its PDF handler, so Ghostscript is not involved in this path.
       await this.run(settings.dvisvgmPath, ["-n", input, "-o", output], work, settings.compileTimeout);
     }
 
@@ -111,7 +107,7 @@ export class RenderService {
   }
 
   private hash(source: string, kind: BlockKind, plan: EnginePlan, settings: TikzSettings): string {
-    return createHash("sha256").update(JSON.stringify({ source, kind, engine: plan.engine, executable: plan.executable, outputType: plan.outputType, preamble: settings.preamble, font: settings.persianFont, dvisvgm: settings.dvisvgmPath, mutool: settings.mutoolPath, pipeline: PIPELINE_VERSION })).digest("hex");
+    return createHash("sha256").update(JSON.stringify({ source, kind, engine: plan.engine, executable: plan.executable, outputType: plan.outputType, preamble: augmentPreamble(settings.preamble, source), font: settings.persianFont, dvisvgm: settings.dvisvgmPath, mutool: settings.mutoolPath, pipeline: PIPELINE_VERSION })).digest("hex");
   }
 
   private cacheRoot(): string {
@@ -156,15 +152,17 @@ export function selectEngine(source: string, settings: TikzSettings): EnginePlan
 }
 
 export function buildDocument(source: string, settings: TikzSettings): string {
-  const text = `${settings.preamble}\n${source}`;
-  const needsXe = /[\u0600-\u06ff]/u.test(text) || /\\usepackage\s*\{\s*(?:xepersian|fontspec)\s*\}/u.test(text);
-  const needsXepersian = needsXe && !/\\usepackage\s*\{\s*xepersian\s*\}/u.test(settings.preamble) && /[\u0600-\u06ff]/u.test(source);
-  const language = needsXepersian ? `\\usepackage{xepersian}\n\\settextfont{${escapeTex(settings.persianFont)}}\n` : "";
   const body = source.trim();
   if (/^\\documentclass\b/u.test(body) && /\\begin\{document\}/u.test(body)) return body.endsWith("\n") ? body : `${body}\n`;
+
+  const effectivePreamble = augmentPreamble(settings.preamble, source);
+  const text = `${effectivePreamble}\n${source}`;
+  const needsXe = /[\u0600-\u06ff]/u.test(text) || /\\usepackage\s*\{\s*(?:xepersian|fontspec)\s*\}/u.test(text);
+  const needsXepersian = needsXe && !/\\usepackage\s*\{\s*xepersian\s*\}/u.test(effectivePreamble) && /[\u0600-\u06ff]/u.test(source);
+  const language = needsXepersian ? `\\usepackage{xepersian}\n\\settextfont{${escapeTex(settings.persianFont)}}\n` : "";
   const hasPictureEnvironment = /\\begin\{(?:tikzpicture|circuitikz|pgfonlayer|axis)\}/u.test(body);
   const wrapper = hasPictureEnvironment ? body : `\\begin{tikzpicture}\n${body}\n\\end{tikzpicture}`;
-  return `\\documentclass{${needsXe ? "article" : "standalone"}}\n${settings.preamble}\n${language}\\begin{document}\n${wrapper}\n\\end{document}\n`;
+  return `\\documentclass{${needsXe ? "article" : "standalone"}}\n${effectivePreamble}\n${language}\\begin{document}\n${wrapper}\n\\end{document}\n`;
 }
 
 export function compilerArgs(tex: string, work: string, outputType: EnginePlan["outputType"] = "pdf"): string[] {
