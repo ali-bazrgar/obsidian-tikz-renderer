@@ -41,11 +41,18 @@ class TikzPreviewWidget extends WidgetType {
       const result = await this.renderService.render(this.fence.source, this.fence.language);
       if (!this.isCurrent(root, generation)) return;
       body.empty();
-      const image = body.createEl("img", {
-        cls: "tikz-live-preview-widget__svg",
-        attr: { src: svgDataUri(result.svg), alt: `Rendered TikZ ${this.fence.language}`, draggable: "false" },
-      });
-      image.addEventListener("load", () => { if (this.isCurrent(root, generation)) root.classList.remove("tikz-live-preview-widget--loading"); }, { once: true });
+
+      const documentRef = root.ownerDocument;
+      const parsed = new DOMParser().parseFromString(result.svg, "image/svg+xml");
+      const parserError = parsed.querySelector("parsererror");
+      if (parserError || parsed.documentElement.tagName.toLowerCase() !== "svg") throw new Error("The renderer produced invalid SVG output.");
+      const svg = documentRef.importNode(parsed.documentElement, true) as unknown as SVGSVGElement;
+      svg.classList.add("tikz-live-preview-widget__svg");
+      svg.setAttribute("role", "img");
+      svg.setAttribute("aria-label", `Rendered TikZ ${this.fence.language}`);
+      svg.setAttribute("draggable", "false");
+      body.appendChild(svg);
+      root.classList.remove("tikz-live-preview-widget--loading");
     } catch (error) {
       if (!this.isCurrent(root, generation)) return;
       root.classList.remove("tikz-live-preview-widget--loading");
@@ -103,4 +110,3 @@ function findFences(text: string): TikzFence[] {
 }
 
 function intersects(aFrom: number, aTo: number, bFrom: number, bTo: number): boolean { return aFrom <= bTo && aTo >= bFrom; }
-function svgDataUri(svg: string): string { return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`; }
