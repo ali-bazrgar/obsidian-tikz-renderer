@@ -2,6 +2,12 @@ export type Engine = "auto" | "latex" | "pdflatex" | "xelatex" | "lualatex" | "d
 
 export type BlockKind = "tikz" | "pgfplots" | "circuitikz" | "tex" | "latex";
 
+export interface EnginePlan {
+  engine: Exclude<Engine, "auto">;
+  executable: string;
+  outputType: "pdf" | "dvi";
+}
+
 export interface RenderResult {
   svg: string;
   hash: string;
