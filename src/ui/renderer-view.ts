@@ -5,6 +5,14 @@ import { ExportService } from "../core/export-service";
 import { TikzHistoryStore } from "../core/history";
 import { DisplayTheme, TikzSettings } from "../settings/settings";
 
+/**
+ * Reading-mode TikZ UI.
+ *
+ * The figure lives in the Markdown processor host. The menu and controls are
+ * intentionally portalled to document.body so they are never clipped by the
+ * figure. A renderer owns every listener/observer it creates and disposes all
+ * of them before the host is replaced or the plugin unloads.
+ */
 export class TikzRendererView {
   private cleanup: (() => void) | undefined;
   private static readonly activeViews = new Map<string, TikzRendererView>();
@@ -27,15 +35,24 @@ export class TikzRendererView {
   ) {}
 
   render(): void {
-    // Markdown rendering can replace the processor host entirely. The host
-    // therefore cannot be the lifecycle identity. historyKey identifies the
-    // logical code block and prevents detached fixed controls from surviving a
-    // re-render with a new DOM host.
-    TikzRendererView.activeViews.get(this.historyKey)?.dispose();
+    // A processor may create a new host for the same logical block. Dispose the
+    // old instance BEFORE installing this one. The previous implementation
+    // registered `this` and then immediately called this.dispose(), which left
+    // the new registry entry alive without a cleanup callback and was the root
+    // cause of orphaned controls accumulating at the top-left of Obsidian.
+    const previous = TikzRendererView.activeViews.get(this.historyKey);
+    if (previous && previous !== this) previous.dispose();
+
+    // Re-rendering the same instance must remove only its old DOM/listeners.
+    this.cleanup?.();
+    this.cleanup = undefined;
+
     TikzRendererView.activeViews.set(this.historyKey, this);
     TikzRendererView.allViews.add(this);
-    this.dispose();
     this.host.empty();
+
+    const documentRef = this.host.ownerDocument;
+    const windowRef = documentRef.defaultView;
 
     const shell = this.host.createDiv({ cls: "tikz-renderer-shell" });
     const paper = shell.createDiv({ cls: "tikz-renderer-paper" });
@@ -50,9 +67,11 @@ export class TikzRendererView {
     });
     img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(this.result.svg)}`;
 
-    const body = this.host.ownerDocument.body;
+    // These two elements are deliberately siblings of the Markdown document,
+    // not children of the figure. This makes their geometry independent from
+    // SVG size and from the figure's overflow/layout.
+    const body = documentRef.body;
     const controls = body.createDiv({ cls: "tikz-renderer-controls" });
-    controls.setAttribute("aria-hidden", "true");
     const menu = controls.createEl("button", {
       cls: "tikz-renderer-menu",
       attr: {
@@ -77,29 +96,42 @@ export class TikzRendererView {
     let lastX = 0;
     let lastY = 0;
 
+    const closePanel = (): void => {
+      panel.hidden = true;
+      menu.setAttribute("aria-expanded", "false");
+      menu.removeAttribute("data-open");
+    };
+
     const positionControls = (): void => {
       if (!shell.isConnected) {
-        controls.hidden = true;
-        return;
-      }
-      const rect = shell.getBoundingClientRect();
-      if (rect.width <= 0 || rect.height <= 0 || rect.bottom < 0 || rect.top > window.innerHeight) {
         controls.hidden = true;
         closePanel();
         return;
       }
-      controls.hidden = false;
-      controls.style.left = `${Math.max(4, rect.left - 22)}px`;
-      controls.style.top = `${Math.max(4, rect.top)}px`;
+      const rect = shell.getBoundingClientRect();
+      const viewportWidth = windowRef?.innerWidth ?? documentRef.documentElement.clientWidth;
+      const viewportHeight = windowRef?.innerHeight ?? documentRef.documentElement.clientHeight;
+      const visible = rect.width > 0 && rect.height > 0 && rect.bottom > 0 && rect.top < viewportHeight && rect.right > 0 && rect.left < viewportWidth;
+      controls.hidden = !visible;
+      if (!visible) {
+        closePanel();
+        return;
+      }
+
+      // Keep the compact button immediately to the left of the figure. If the
+      // figure touches the viewport edge, keep the button inside the viewport.
+      const left = Math.max(4, Math.min(rect.left - 22, viewportWidth - 22));
+      controls.style.left = `${Math.round(left)}px`;
+      controls.style.top = `${Math.round(Math.max(4, rect.top))}px`;
     };
 
     const positionPanel = (): void => {
       if (panel.hidden || controls.hidden || !shell.isConnected) return;
       const buttonRect = menu.getBoundingClientRect();
+      const viewportWidth = windowRef?.innerWidth ?? documentRef.documentElement.clientWidth;
+      const viewportHeight = windowRef?.innerHeight ?? documentRef.documentElement.clientHeight;
       const panelRect = panel.getBoundingClientRect();
       const gap = 7;
-      const viewportWidth = document.documentElement.clientWidth;
-      const viewportHeight = document.documentElement.clientHeight;
       const width = Math.min(panelRect.width || 240, viewportWidth - 16);
       const height = Math.min(panelRect.height || 240, viewportHeight - 16);
 
@@ -130,6 +162,8 @@ export class TikzRendererView {
 
     const applyZoom = (): void => {
       if (naturalWidth > 0 && naturalHeight > 0) {
+        // Real layout dimensions, not transform:scale(). The surrounding paper
+        // therefore follows the actual zoomed figure size.
         img.style.width = `${naturalWidth * zoom}px`;
         img.style.height = `${naturalHeight * zoom}px`;
         img.style.maxWidth = "none";
@@ -141,20 +175,6 @@ export class TikzRendererView {
       viewport.style.touchAction = zoom > 1 ? "none" : "pan-y";
       applyTheme();
       positionControls();
-      positionPanel();
-    };
-
-    const closePanel = (): void => {
-      panel.hidden = true;
-      menu.setAttribute("aria-expanded", "false");
-      menu.removeAttribute("data-open");
-    };
-
-    const openPanel = (): void => {
-      if (controls.hidden || !shell.isConnected) return;
-      panel.hidden = false;
-      menu.setAttribute("aria-expanded", "true");
-      menu.setAttribute("data-open", "true");
       positionPanel();
     };
 
@@ -174,6 +194,14 @@ export class TikzRendererView {
       applyZoom();
     };
 
+    const openPanel = (): void => {
+      if (controls.hidden || !shell.isConnected) return;
+      panel.hidden = false;
+      menu.setAttribute("aria-expanded", "true");
+      menu.setAttribute("data-open", "true");
+      positionPanel();
+    };
+
     menu.addEventListener("click", (event) => {
       event.preventDefault();
       event.stopPropagation();
@@ -181,6 +209,8 @@ export class TikzRendererView {
       else closePanel();
     });
 
+    // Capture-phase pointerdown closes the panel before Obsidian's own editor
+    // handlers run. Clicking the button/panel itself is explicitly excluded.
     const outsidePointerDown = (event: PointerEvent): void => {
       if (panel.hidden) return;
       const target = event.target;
@@ -188,7 +218,7 @@ export class TikzRendererView {
       if (controls.contains(target) || panel.contains(target)) return;
       closePanel();
     };
-    document.addEventListener("pointerdown", outsidePointerDown, true);
+    documentRef.addEventListener("pointerdown", outsidePointerDown, true);
 
     const addButton = (label: string, action: () => void | Promise<void>): void => {
       const button = panel.createEl("button", { text: label, attr: { type: "button", role: "menuitem" } });
@@ -199,13 +229,65 @@ export class TikzRendererView {
       });
     };
 
+    const renderThemeMenu = (): void => {
+      panel.empty();
+      panel.createDiv({ cls: "tikz-renderer-panel-title", text: "Theme" });
+      const themes: Array<[DisplayTheme, string]> = [
+        ["auto", "Auto"], ["obsidian", "Obsidian"], ["light", "Light"], ["paper", "Paper"],
+        ["dark", "Dark"], ["contrast", "Contrast"], ["bw", "Black & white"], ["custom", "Custom"],
+      ];
+      for (const [theme, label] of themes) {
+        const button = panel.createEl("button", {
+          text: label,
+          attr: { type: "button", role: "menuitemradio", "aria-checked": `${this.getSettings().displayTheme === theme}` },
+        });
+        button.addEventListener("click", async (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          await this.saveSettings({ ...this.getSettings(), displayTheme: theme });
+          applyTheme();
+          if (theme === "custom") renderThemeMenu();
+          else closePanel();
+        });
+      }
+
+      if (this.getSettings().displayTheme === "custom") {
+        const color = panel.createEl("input", {
+          attr: { type: "color", value: this.getSettings().customBackgroundColor, "aria-label": "Custom background color" },
+        });
+        color.addEventListener("change", async () => {
+          await this.saveSettings({ ...this.getSettings(), customBackgroundColor: color.value });
+          applyTheme();
+        });
+
+        const opacity = panel.createEl("input", {
+          attr: { type: "range", min: "10", max: "100", step: "1", value: `${this.getSettings().customBackgroundOpacity}`, "aria-label": "Custom background opacity" },
+        });
+        opacity.addEventListener("input", () => {
+          shell.style.setProperty("--tikz-custom-bg-opacity", `${Number(opacity.value) / 100}`);
+        });
+        opacity.addEventListener("change", async () => {
+          await this.saveSettings({ ...this.getSettings(), customBackgroundOpacity: Number(opacity.value) });
+        });
+      }
+
+      const back = panel.createEl("button", { text: "Back", attr: { type: "button" } });
+      back.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        buildMainPanel();
+        positionPanel();
+      });
+      positionPanel();
+    };
+
     const buildMainPanel = (): void => {
       panel.empty();
       addButton("Zoom −", () => { zoom = clampZoom(zoom - 0.25); applyZoom(); });
       addButton("Zoom +", () => { zoom = clampZoom(zoom + 0.25); applyZoom(); });
       addButton("Reset view", resetView);
       addButton("Fit", fit);
-      addButton("Theme", () => renderThemeMenu());
+      addButton("Theme", renderThemeMenu);
       addButton("Edit source", () => new TikzSourceModal(this.app, this.source, async (next) => this.editSource(next)).open());
       addButton("History", () => this.showHistory(panel));
       addButton("Re-render", async () => {
@@ -251,41 +333,6 @@ export class TikzRendererView {
       });
     };
 
-    const renderThemeMenu = (): void => {
-      panel.empty();
-      panel.createDiv({ cls: "tikz-renderer-panel-title", text: "Theme" });
-      const themes: Array<[DisplayTheme, string]> = [["auto", "Auto"], ["obsidian", "Obsidian"], ["light", "Light"], ["paper", "Paper"], ["dark", "Dark"], ["contrast", "Contrast"], ["bw", "Black & white"], ["custom", "Custom"]];
-      for (const [theme, label] of themes) {
-        const button = panel.createEl("button", { text: label, attr: { type: "button", role: "menuitemradio", "aria-checked": `${this.getSettings().displayTheme === theme}` } });
-        button.addEventListener("click", async (event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          await this.saveSettings({ ...this.getSettings(), displayTheme: theme });
-          applyTheme();
-          if (theme === "custom") renderThemeMenu();
-          else closePanel();
-        });
-      }
-      if (this.getSettings().displayTheme === "custom") {
-        const color = panel.createEl("input", { attr: { type: "color", value: this.getSettings().customBackgroundColor, "aria-label": "Custom background color" } });
-        color.addEventListener("change", async () => {
-          await this.saveSettings({ ...this.getSettings(), customBackgroundColor: color.value });
-          applyTheme();
-        });
-        const opacity = panel.createEl("input", { attr: { type: "range", min: "10", max: "100", step: "1", value: `${this.getSettings().customBackgroundOpacity}`, "aria-label": "Custom background opacity" } });
-        opacity.addEventListener("input", () => shell.style.setProperty("--tikz-custom-bg-opacity", `${Number(opacity.value) / 100}`));
-        opacity.addEventListener("change", async () => this.saveSettings({ ...this.getSettings(), customBackgroundOpacity: Number(opacity.value) }));
-      }
-      const back = panel.createEl("button", { text: "Back", attr: { type: "button" } });
-      back.addEventListener("click", (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        buildMainPanel();
-        positionPanel();
-      });
-      positionPanel();
-    };
-
     buildMainPanel();
 
     assetLink.addEventListener("click", (event) => {
@@ -324,14 +371,19 @@ export class TikzRendererView {
     viewport.addEventListener("pointercancel", stopDragging);
     viewport.addEventListener("lostpointercapture", stopDragging);
 
+    // Normal wheel belongs to Obsidian. Only Ctrl/Cmd + wheel belongs to the
+    // TikZ figure. The handler is passive:false and capture-phase so browser
+    // zoom/Obsidian scrolling cannot race the figure zoom operation.
     const wheel = (event: WheelEvent): void => {
       if (!event.ctrlKey && !event.metaKey) return;
       if (!naturalWidth || !naturalHeight) return;
       event.preventDefault();
       event.stopImmediatePropagation();
+
       const oldZoom = zoom;
       const nextZoom = clampZoom(oldZoom * (event.deltaY < 0 ? 1.12 : 1 / 1.12));
       if (nextZoom === oldZoom) return;
+
       const rect = viewport.getBoundingClientRect();
       const pointerX = event.clientX - rect.left;
       const pointerY = event.clientY - rect.top;
@@ -352,6 +404,8 @@ export class TikzRendererView {
     img.addEventListener("load", initializeIntrinsicSize, { once: true });
     if (img.complete) initializeIntrinsicSize();
 
+    // Theme changes should affect presentation only. Observe the body class,
+    // but never rewrite the SVG source or SVG markup.
     const observer = new MutationObserver(() => {
       applyTheme();
       positionControls();
@@ -365,21 +419,20 @@ export class TikzRendererView {
     });
     resizeObserver.observe(shell);
 
-    const view = this.host.ownerDocument.defaultView;
     const reposition = (): void => {
       positionControls();
       positionPanel();
     };
-    view?.addEventListener("scroll", reposition, true);
-    view?.addEventListener("resize", reposition);
+    windowRef?.addEventListener("scroll", reposition, true);
+    windowRef?.addEventListener("resize", reposition);
 
     applyTheme();
     positionControls();
 
     this.cleanup = () => {
-      document.removeEventListener("pointerdown", outsidePointerDown, true);
-      view?.removeEventListener("scroll", reposition, true);
-      view?.removeEventListener("resize", reposition);
+      documentRef.removeEventListener("pointerdown", outsidePointerDown, true);
+      windowRef?.removeEventListener("scroll", reposition, true);
+      windowRef?.removeEventListener("resize", reposition);
       observer.disconnect();
       resizeObserver.disconnect();
       controls.remove();
@@ -390,11 +443,14 @@ export class TikzRendererView {
     };
   }
 
-  dispose(): void { this.cleanup?.(); }
+  dispose(): void {
+    this.cleanup?.();
+  }
 
   static disposeAll(): void {
     for (const view of Array.from(TikzRendererView.allViews)) view.dispose();
     TikzRendererView.activeViews.clear();
+    TikzRendererView.allViews.clear();
   }
 
   private showAssetLink(panel: HTMLElement, type: string, path: string): void {
@@ -418,7 +474,11 @@ export class TikzRendererView {
       const row = panel.createDiv({ cls: "tikz-history-row" });
       row.createSpan({ text: `Version ${entries.length - index}` });
       row.createSpan({ text: new Date(entry.timestamp).toLocaleString() });
-      if (entry.source !== this.source) row.createEl("button", { text: "Restore", attr: { type: "button" } }).addEventListener("click", () => new TikzSourceModal(this.app, entry.source, async (next) => this.editSource(next)).open());
+      if (entry.source !== this.source) {
+        row.createEl("button", { text: "Restore", attr: { type: "button" } }).addEventListener("click", () => {
+          new TikzSourceModal(this.app, entry.source, async (next) => this.editSource(next)).open();
+        });
+      }
     });
   }
 
@@ -430,21 +490,31 @@ export class TikzRendererView {
   }
 }
 
-function clampZoom(value: number): number { return Math.min(5, Math.max(0.25, value)); }
+function clampZoom(value: number): number {
+  return Math.min(5, Math.max(0.25, value));
+}
 
 class TikzSourceModal extends Modal {
-  constructor(app: App, private readonly initialSource: string, private readonly onRender: (source: string) => Promise<void>) { super(app); }
+  constructor(app: App, private readonly initialSource: string, private readonly onRender: (source: string) => Promise<void>) {
+    super(app);
+  }
+
   onOpen(): void {
     this.titleEl.empty();
     this.contentEl.empty();
     const editor = this.contentEl.createEl("textarea", { cls: "tikz-source-editor" });
     editor.value = this.initialSource;
     editor.spellcheck = false;
+
     const actions = this.contentEl.createDiv({ cls: "tikz-source-actions" });
     actions.createEl("button", { text: "Cancel", attr: { type: "button" } }).addEventListener("click", () => this.close());
     actions.createEl("button", { text: "Render", attr: { type: "button" } }).addEventListener("click", async () => {
-      try { await this.onRender(editor.value); this.close(); }
-      catch (error) { new Notice(error instanceof Error ? error.message : String(error), 8000); }
+      try {
+        await this.onRender(editor.value);
+        this.close();
+      } catch (error) {
+        new Notice(error instanceof Error ? error.message : String(error), 8000);
+      }
     });
     editor.focus();
   }
