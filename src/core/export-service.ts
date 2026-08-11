@@ -17,7 +17,7 @@ export class ExportService {
     const folder = normalizePath(`${this.resolveAssetFolder(sourcePath)}/PNG`);
     await this.ensureVaultFolder(folder);
     const relativePng = normalizePath(`${folder}/${hash}.png`);
-    const png = await svgToPng(svg, 2);
+    const png = await svgToPng(svg, 1);
     await this.app.vault.adapter.writeBinary(relativePng, png);
     new Notice(`TikZ PNG saved: ${relativePng}`);
     return relativePng;
@@ -27,7 +27,7 @@ export class ExportService {
     const folder = normalizePath(`${this.resolveAssetFolder(sourcePath)}/PNG`);
     await this.ensureVaultFolder(folder);
     const relativePng = normalizePath(`${folder}/${hash}.png`);
-    const png = await svgToPngSnapshot(svg, 2, viewportWidth, viewportHeight, zoom, panX, panY, backgroundColor);
+    const png = await svgToPngSnapshot(svg, 1, viewportWidth, viewportHeight, zoom, panX, panY, backgroundColor);
     await this.app.vault.adapter.writeBinary(relativePng, png);
     new Notice(`TikZ PNG saved: ${relativePng}`);
     return relativePng;
