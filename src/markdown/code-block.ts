@@ -90,7 +90,7 @@ async function ensureSourceAssetLinks(app: App, sourcePath: string, section: Mar
 }
 
 function makeHistoryKey(ctx: MarkdownPostProcessorContext, section: MarkdownSectionInformation | null, kind: BlockKind, source: string): string {
-  const location = section ? `${section.lineStart}-${section.lineEnd}` : createHash("sha256").update(source).digest("hex").slice(0, 16);
+  const location = section ? `${section.lineStart}` : createHash("sha256").update(source).digest("hex").slice(0, 16);
   return `${ctx.sourcePath}:${location}:${kind}`;
 }
 
