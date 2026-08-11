@@ -8,8 +8,11 @@ import { TikzRendererView } from "../ui/renderer-view";
 
 export class TikzMarkdownProcessor {
   static async process(app: App, exportService: ExportService, history: TikzHistoryStore, kind: BlockKind, source: string, el: HTMLElement, ctx: MarkdownPostProcessorContext, service: RenderService): Promise<void> {
-    const host = el.createDiv({ cls: "tikz-renderer-block" });
+    // Clear the processor container BEFORE creating our host. Calling
+    // el.empty() after createDiv() would remove the host and make both the
+    // loading state and the eventual SVG invisible.
     el.empty();
+    const host = el.createDiv({ cls: "tikz-renderer-block" });
     host.createDiv({ cls: "tikz-renderer-status", text: "Rendering TikZ…" });
     const section = ctx.getSectionInfo(el);
     const historyKey = makeHistoryKey(ctx, section, kind, source);
@@ -60,8 +63,6 @@ async function replaceSource(app: App, ctx: MarkdownPostProcessorContext, el: HT
   ];
   const replacement = replacementLines.join("\n");
 
-  // Use the exact section text rather than a global first-match search. This
-  // prevents editing the wrong block when a note contains duplicate sections.
   await app.vault.process(file, (data) => {
     const sectionStart = findNthLineOffset(data, section.lineStart);
     const sectionEnd = findNthLineOffset(data, section.lineEnd);
@@ -69,7 +70,6 @@ async function replaceSource(app: App, ctx: MarkdownPostProcessorContext, el: HT
     if (currentSection.replace(/\r\n/gu, "\n") !== section.text.replace(/\r\n/gu, "\n")) {
       throw new Error("The note changed before the edit could be applied. Please render again and retry.");
     }
-    const originalSection = section.text;
     const eol = data.includes("\r\n") ? "\r\n" : "\n";
     const replacementWithEol = replacement.replace(/\n/gu, eol);
     return `${data.slice(0, sectionStart)}${replacementWithEol}${data.slice(sectionEnd)}`;
