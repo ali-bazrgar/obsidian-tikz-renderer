@@ -10,6 +10,7 @@ await esbuild.build({
   platform: "node",
   target: "es2018",
   outfile: "main.js",
+  metafile: production ? "meta.json" : undefined,
   sourcemap: production ? false : "inline",
   minify: production,
   logLevel: "info",
