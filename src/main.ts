@@ -9,12 +9,15 @@ import { texLiveExecutableCandidates, ExecutableProbe, probeAllExecutables, TeXE
 import { TikzRendererView } from "./ui/renderer-view";
 
 const LANGUAGES: BlockKind[] = ["tikz", "pgfplots", "circuitikz", "tex", "latex"];
+const GENERATED_ASSET_CLASS = "tikz-generated-asset-link";
+const GENERATED_EDIT_CLASS = "tikz-generated-edit-link";
 
 export default class TikzRendererPlugin extends Plugin {
   settings!: TikzSettings;
   renderService!: RenderService;
   exportService!: ExportService;
   historyStore!: TikzHistoryStore;
+  private generatedLinkObserver?: MutationObserver;
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -28,23 +31,13 @@ export default class TikzRendererPlugin extends Plugin {
       );
     }
 
-    // The generated [[asset.svg]] is intentionally kept in the Markdown source
-    // so it behaves like a normal Obsidian attachment link in Live Preview and
-    // Source mode. In Reading view only the paragraph immediately following a
-    // TikZ renderer is hidden; unrelated SVG links remain untouched.
-    this.registerMarkdownPostProcessor((el) => {
-      const tikzBlocks = Array.from(el.querySelectorAll<HTMLElement>(".tikz-renderer-block"));
-      for (const block of tikzBlocks) {
-        const next = block.nextElementSibling;
-        if (!(next instanceof HTMLElement)) continue;
-        const links = Array.from(next.querySelectorAll<HTMLAnchorElement>("a.internal-link"));
-        if (!links.length) continue;
-        if (links.some((link) => /\.svg(?:#.*)?$/iu.test(link.getAttribute("href") ?? ""))) {
-          next.classList.add("tikz-generated-asset-link");
-          next.setAttribute("aria-hidden", "true");
-        }
-      }
-    });
+    // Obsidian may create the generated wikilink anchor after the TikZ processor
+    // has finished. Observe the rendered DOM and mark only anchors whose href is
+    // explicitly tagged by our generated-link data attribute.
+    this.generatedLinkObserver = new MutationObserver(() => this.markGeneratedLinks());
+    this.generatedLinkObserver.observe(document.body, { childList: true, subtree: true });
+    this.register(() => this.generatedLinkObserver?.disconnect());
+    this.markGeneratedLinks();
 
     this.addCommand({ id: "test-tex-installation", name: "Test TeX installation", callback: async () => {
       const result = await this.renderService.testInstallation();
@@ -55,7 +48,23 @@ export default class TikzRendererPlugin extends Plugin {
     this.addSettingTab(new TikzSettingTab(this.app, this));
   }
 
+  private markGeneratedLinks(): void {
+    const anchors = Array.from(document.body.querySelectorAll<HTMLAnchorElement>("a[href]"));
+    for (const link of anchors) {
+      const href = decodeURIComponent(link.getAttribute("href") ?? "").replace(/\\/gu, "/");
+      const text = link.textContent?.trim() ?? "";
+      if (/^#tikz-edit:/u.test(href) || text === "✎ Edit TikZ") {
+        link.classList.add(GENERATED_EDIT_CLASS);
+      }
+      // Generated asset links are identified by the marker written by the
+      // markdown processor. Do not hide unrelated user SVG attachments.
+      if (link.dataset.tikzGenerated) link.classList.add(GENERATED_ASSET_CLASS);
+    }
+  }
+
   onunload(): void {
+    this.generatedLinkObserver?.disconnect();
+    this.generatedLinkObserver = undefined;
     TikzRendererView.disposeAll();
     this.renderService?.dispose();
   }
