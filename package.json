@@ -5,9 +5,10 @@
   "description": "Professional TikZ/PGF renderer for Obsidian Desktop",
   "main": "main.js",
   "scripts": {
-    "build": "node esbuild.config.mjs production",
+    "build": "node esbuild.config.mjs production && node scripts/verify-build.mjs",
     "dev": "node esbuild.config.mjs development",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "verify": "node scripts/verify-build.mjs"
   },
   "devDependencies": {
     "@codemirror/state": "6.5.2",
