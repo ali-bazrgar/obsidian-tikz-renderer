@@ -14,6 +14,7 @@ interface TikzFence {
 
 class TikzPreviewWidget extends WidgetType {
   private element: HTMLElement | null = null;
+  private generation = 0;
 
   constructor(
     private readonly fence: TikzFence,
@@ -21,6 +22,7 @@ class TikzPreviewWidget extends WidgetType {
   ) { super(); }
 
   toDOM(): HTMLElement {
+    const generation = ++this.generation;
     const root = document.createElement("div");
     root.className = "tikz-live-preview-widget tikz-live-preview-widget--loading";
     root.setAttribute("role", "figure");
@@ -34,8 +36,14 @@ class TikzPreviewWidget extends WidgetType {
     body.createSpan({ cls: "tikz-live-preview-widget__placeholder", text: `${this.fence.language} · rendering` });
     this.element = root;
 
-    void this.render(body, root);
+    void this.render(body, root, generation);
     return root;
+  }
+
+  /** Invalidate pending DOM updates when CodeMirror discards this widget. */
+  destroy(dom: HTMLElement): void {
+    this.generation += 1;
+    if (this.element === dom) this.element = null;
   }
 
   ignoreEvent(): boolean { return false; }
@@ -43,13 +51,15 @@ class TikzPreviewWidget extends WidgetType {
   eq(other: WidgetType): boolean {
     return other instanceof TikzPreviewWidget &&
       other.fence.language === this.fence.language &&
-      other.fence.source === this.fence.source;
+      other.fence.source === this.fence.source &&
+      other.fence.from === this.fence.from &&
+      other.fence.to === this.fence.to;
   }
 
-  private async render(body: HTMLElement, root: HTMLElement): Promise<void> {
+  private async render(body: HTMLElement, root: HTMLElement, generation: number): Promise<void> {
     try {
       const result = await this.renderService.render(this.fence.source, this.fence.language);
-      if (this.element !== root || !root.isConnected) return;
+      if (!this.isCurrent(root, generation)) return;
 
       body.empty();
       const image = body.createEl("img", {
@@ -60,10 +70,12 @@ class TikzPreviewWidget extends WidgetType {
           draggable: "false",
         },
       });
-      image.addEventListener("load", () => root.classList.remove("tikz-live-preview-widget--loading"), { once: true });
+      image.addEventListener("load", () => {
+        if (this.isCurrent(root, generation)) root.classList.remove("tikz-live-preview-widget--loading");
+      }, { once: true });
       root.querySelector<HTMLElement>(".tikz-live-preview-widget__status")?.setText("Ready");
     } catch (error) {
-      if (this.element !== root || !root.isConnected) return;
+      if (!this.isCurrent(root, generation)) return;
       root.classList.remove("tikz-live-preview-widget--loading");
       root.classList.add("tikz-live-preview-widget--error");
       body.empty();
@@ -73,6 +85,10 @@ class TikzPreviewWidget extends WidgetType {
       root.querySelector<HTMLElement>(".tikz-live-preview-widget__status")?.setText("Error");
       console.error("[TikZ Renderer] Live Preview render failed", error);
     }
+  }
+
+  private isCurrent(root: HTMLElement, generation: number): boolean {
+    return this.element === root && this.generation === generation && root.isConnected;
   }
 }
 
