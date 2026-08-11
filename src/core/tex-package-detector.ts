@@ -18,6 +18,8 @@ const PACKAGE_BY_PATTERN: Array<[RegExp, string]> = [
   [/\\gantt(?:bar|group|newline|link)\b/u, "pgfgantt"],
   [/\\begin\{circuitikz\}/u, "circuitikz"],
   [/\\begin\{forest\}|\\forestset\b/u, "forest"],
+  // The `axis` environment is provided by pgfplots, not by core TikZ.
+  [/\\begin\{axis\}|\\end\{axis\}|\\addplot\b|\\addplot3\b|\\begin\{semilogxaxis\}|\\begin\{semilogyaxis\}|\\begin\{loglogaxis\}/u, "pgfplots"],
 ];
 
 // Conservative, source-driven TikZ library detection. Libraries are not
