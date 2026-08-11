@@ -1,4 +1,4 @@
-import { App, normalizePath, Notice, Plugin, PluginSettingTab, Setting } from "obsidian";
+import { normalizePath, Notice, Plugin, PluginSettingTab, Setting } from "obsidian";
 import { RenderService } from "./core/render-service";
 import { ExportService } from "./core/export-service";
 import { TikzHistoryStore } from "./core/history";
@@ -7,6 +7,7 @@ import { BlockKind } from "./core/types";
 import { TikzMarkdownProcessor } from "./markdown/code-block";
 import { texLiveExecutableCandidates, ExecutableProbe, probeAllExecutables, TeXExecutableName } from "./core/executable-detector";
 import { createTikzLivePreviewExtensions } from "./editor/live-preview";
+import { TikzRendererView } from "./ui/renderer-view";
 
 const LANGUAGES: BlockKind[] = ["tikz", "pgfplots", "circuitikz", "tex", "latex"];
 
@@ -38,7 +39,11 @@ export default class TikzRendererPlugin extends Plugin {
     this.addSettingTab(new TikzSettingTab(this.app, this));
   }
 
-  onunload(): void { this.renderService?.dispose(); }
+  onunload(): void {
+    TikzRendererView.disposeAll();
+    this.renderService?.dispose();
+  }
+
   async loadSettings(): Promise<void> { this.settings = { ...DEFAULT_SETTINGS, ...(await this.loadData() as Partial<TikzSettings>) }; }
   async saveSettings(settings?: TikzSettings): Promise<void> { if (settings) this.settings = settings; await this.saveData(this.settings); }
 
@@ -69,7 +74,7 @@ export default class TikzRendererPlugin extends Plugin {
 
 class TikzSettingTab extends PluginSettingTab {
   private detectionContainer?: HTMLElement;
-  constructor(app: App, private readonly plugin: TikzRendererPlugin) { super(app, plugin); }
+  constructor(app: import("obsidian").App, private readonly plugin: TikzRendererPlugin) { super(app, plugin); }
 
   display(): void {
     const container = this.containerEl;
