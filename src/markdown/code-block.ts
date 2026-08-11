@@ -84,14 +84,10 @@ async function ensureSourceAssetLinks(app: App, sourcePath: string, section: Mar
   await app.vault.process(file, data => {
     const eol = data.includes("\r\n") ? "\r\n" : "\n";
     const lines = data.split(/\r?\n/u);
-    // Remove plugin-generated asset links and all legacy Edit TikZ links first.
     for (let index = lines.length - 1; index >= 0; index -= 1) {
       const trimmed = lines[index].trim();
       if (trimmed === wikilink || /\[✎\s*Edit TikZ\]\(\s*#tikz-edit\\?:/u.test(trimmed)) lines.splice(index, 1);
     }
-    // Re-locate the exact fenced block after removals. Never insert anything
-    // into the fence itself; the generated asset link belongs immediately after
-    // the closing fence so Obsidian renders it as an ordinary note link.
     const startLine = Math.max(0, Math.min(section.lineStart, lines.length - 1));
     let open = -1;
     for (let i = startLine; i < lines.length; i += 1) {
@@ -112,7 +108,8 @@ async function ensureSourceAssetLinks(app: App, sourcePath: string, section: Mar
 function makeHistoryKey(ctx: MarkdownPostProcessorContext, section: MarkdownSectionInformation | null, kind: BlockKind, source: string): string {
   const canonicalSource = source.replace(/\r\n/gu, "\n").replace(/[ \t]+$/gmu, "").trimEnd();
   const sourceHash = createHash("sha256").update(canonicalSource).digest("hex").slice(0, 32);
-  return `${ctx.sourcePath}:${kind}:${sourceHash}`;
+  const blockAnchor = section ? String(section.lineStart) : "unknown";
+  return `${ctx.sourcePath}:${kind}:${blockAnchor}:${sourceHash}`;
 }
 
 async function replaceSource(app: App, ctx: MarkdownPostProcessorContext, el: HTMLElement, kind: BlockKind, nextSource: string): Promise<void> {
