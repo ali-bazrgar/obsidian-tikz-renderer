@@ -1,65 +1,151 @@
 import { Decoration, DecorationSet, EditorView, WidgetType } from "@codemirror/view";
 import { EditorState, RangeSetBuilder, StateField } from "@codemirror/state";
+import { BlockKind } from "../core/types";
+import { RenderService } from "../core/render-service";
 
-class TikzPlaceholderWidget extends WidgetType {
-  constructor(private readonly language: string) { super(); }
+const LANGUAGES = new Set<BlockKind>(["tikz", "pgfplots", "circuitikz", "tex", "latex"]);
+
+interface TikzFence {
+  from: number;
+  to: number;
+  language: BlockKind;
+  source: string;
+}
+
+class TikzPreviewWidget extends WidgetType {
+  private element: HTMLElement | null = null;
+
+  constructor(
+    private readonly fence: TikzFence,
+    private readonly renderService: RenderService,
+  ) { super(); }
 
   toDOM(): HTMLElement {
-    const element = document.createElement("span");
-    element.className = "tikz-live-preview-widget";
-    element.textContent = `TikZ Renderer · ${this.language}`;
-    element.setAttribute("role", "img");
-    element.setAttribute("aria-label", `TikZ ${this.language} preview placeholder`);
-    return element;
+    const root = document.createElement("div");
+    root.className = "tikz-live-preview-widget tikz-live-preview-widget--loading";
+    root.setAttribute("role", "figure");
+    root.setAttribute("aria-label", `TikZ ${this.fence.language} preview`);
+
+    const header = root.createDiv({ cls: "tikz-live-preview-widget__header" });
+    header.createSpan({ cls: "tikz-live-preview-widget__title", text: "TikZ Renderer" });
+    header.createSpan({ cls: "tikz-live-preview-widget__status", text: "Rendering…" });
+
+    const body = root.createDiv({ cls: "tikz-live-preview-widget__body" });
+    body.createSpan({ cls: "tikz-live-preview-widget__placeholder", text: `${this.fence.language} · rendering` });
+    this.element = root;
+
+    void this.render(body, root);
+    return root;
   }
 
   ignoreEvent(): boolean { return false; }
-}
 
-const FENCE = /(^|\n)(```(tikz|pgfplots|circuitikz|tex|latex)\n)([\s\S]*?)(\n```)(?=\n|$)/g;
+  eq(other: WidgetType): boolean {
+    return other instanceof TikzPreviewWidget &&
+      other.fence.language === this.fence.language &&
+      other.fence.source === this.fence.source;
+  }
+
+  private async render(body: HTMLElement, root: HTMLElement): Promise<void> {
+    try {
+      const result = await this.renderService.render(this.fence.source, this.fence.language);
+      if (this.element !== root || !root.isConnected) return;
+
+      body.empty();
+      const image = body.createEl("img", {
+        cls: "tikz-live-preview-widget__svg",
+        attr: {
+          src: svgDataUri(result.svg),
+          alt: `Rendered TikZ ${this.fence.language}`,
+          draggable: "false",
+        },
+      });
+      image.addEventListener("load", () => root.classList.remove("tikz-live-preview-widget--loading"), { once: true });
+      root.querySelector<HTMLElement>(".tikz-live-preview-widget__status")?.setText("Ready");
+    } catch (error) {
+      if (this.element !== root || !root.isConnected) return;
+      root.classList.remove("tikz-live-preview-widget--loading");
+      root.classList.add("tikz-live-preview-widget--error");
+      body.empty();
+      const errorBox = body.createDiv({ cls: "tikz-live-preview-widget__error" });
+      errorBox.createEl("strong", { text: "TikZ rendering failed" });
+      errorBox.createEl("pre", { text: error instanceof Error ? error.message : String(error) });
+      root.querySelector<HTMLElement>(".tikz-live-preview-widget__status")?.setText("Error");
+      console.error("[TikZ Renderer] Live Preview render failed", error);
+    }
+  }
+}
 
 /**
  * Live Preview decoration layer.
  *
- * Block replacement is deliberately provided by a StateField rather than a
- * ViewPlugin. CodeMirror 6 forbids block decorations supplied directly by a
- * view plugin. The field also leaves the source untouched whenever the
- * selection intersects a TikZ fence, preserving normal editing semantics.
+ * Block replacement is provided by a StateField, not a ViewPlugin. The
+ * asynchronous TeX compilation happens only after the widget enters the DOM;
+ * CodeMirror's state update path therefore remains synchronous and cheap.
  */
-export const tikzLivePreviewField = StateField.define<DecorationSet>({
-  create: (state) => buildDecorations(state),
-  update: (decorations, transaction) => {
-    if (!transaction.docChanged && !transaction.selection) return decorations;
-    return buildDecorations(transaction.state);
-  },
-  provide: (field) => EditorView.decorations.from(field),
-});
+export function createTikzLivePreviewExtension(renderService: RenderService) {
+  return StateField.define<DecorationSet>({
+    create: (state) => buildDecorations(state, renderService),
+    update: (decorations, transaction) => {
+      if (!transaction.docChanged && !transaction.selection) return decorations;
+      return buildDecorations(transaction.state, renderService);
+    },
+    provide: (field) => EditorView.decorations.from(field),
+  });
+}
 
-export const tikzLivePreviewExtension = [tikzLivePreviewField];
+export function createTikzLivePreviewExtensions(renderService: RenderService) {
+  return [createTikzLivePreviewExtension(renderService)];
+}
 
-function buildDecorations(state: EditorState): DecorationSet {
+function buildDecorations(state: EditorState, renderService: RenderService): DecorationSet {
   const builder = new RangeSetBuilder<Decoration>();
-  const selections = state.selection.ranges;
   const text = state.doc.toString();
-  FENCE.lastIndex = 0;
+  const fences = findFences(text);
 
-  let match: RegExpExecArray | null;
-  while ((match = FENCE.exec(text)) !== null) {
-    const linePrefixLength = (match[1] ?? "").length;
-    const fenceStart = match.index + linePrefixLength;
-    const fenceEnd = fenceStart + match[2].length + match[4].length + match[5].length;
-
-    if (selections.some((range) => range.from < fenceEnd && range.to > fenceStart)) continue;
-
+  for (const fence of fences) {
+    if (state.selection.ranges.some((range) => intersects(range.from, range.to, fence.from, fence.to))) continue;
     builder.add(
-      fenceStart,
-      fenceEnd,
+      fence.from,
+      fence.to,
       Decoration.replace({
-        widget: new TikzPlaceholderWidget(match[3]),
+        widget: new TikzPreviewWidget(fence, renderService),
         block: true,
       }),
     );
   }
-
   return builder.finish();
+}
+
+function findFences(text: string): TikzFence[] {
+  const result: TikzFence[] = [];
+  const lines = text.split("\n");
+  let offset = 0;
+  let active: { start: number; language: BlockKind; contentStart: number } | null = null;
+
+  for (const line of lines) {
+    const match = /^```(tikz|pgfplots|circuitikz|tex|latex)\s*$/u.exec(line);
+    if (!active && match && LANGUAGES.has(match[1] as BlockKind)) {
+      active = { start: offset, language: match[1] as BlockKind, contentStart: offset + line.length + 1 };
+    } else if (active && /^```\s*$/u.test(line)) {
+      const contentEnd = offset;
+      result.push({
+        from: active.start,
+        to: offset + line.length,
+        language: active.language,
+        source: text.slice(active.contentStart, contentEnd).trim(),
+      });
+      active = null;
+    }
+    offset += line.length + 1;
+  }
+  return result;
+}
+
+function intersects(aFrom: number, aTo: number, bFrom: number, bTo: number): boolean {
+  return aFrom <= bTo && aTo >= bFrom;
+}
+
+function svgDataUri(svg: string): string {
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 }
