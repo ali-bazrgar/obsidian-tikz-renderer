@@ -12,7 +12,7 @@ import { augmentPreamble } from "./tex-package-detector";
 import { TeXDependencyResolver } from "./tex-dependency-resolver";
 
 const execFileAsync = promisify(execFile);
-const PIPELINE_VERSION = "18-tex-error-diagnostics";
+const PIPELINE_VERSION = "19-wrapper-and-tex-diagnostics";
 const MAX_OUTPUT = 4 * 1024 * 1024;
 const MAX_DEPENDENCY_RETRIES = 3;
 
@@ -221,17 +221,44 @@ export function selectEngine(source: string, settings: TikzSettings): EnginePlan
 
 export function buildDocument(source: string, settings: TikzSettings, preambleOverride?: string): string {
   const body = source.trim();
-  if (/^\\documentclass\b/u.test(body) && /\\begin\{document\}/u.test(body)) return body.endsWith("\n") ? body : `${body}\n`;
   const effectivePreamble = preambleOverride ?? augmentPreamble(settings.preamble, source);
-  const text = `${effectivePreamble}\n${source}`;
+  const text = `${effectivePreamble}\n${body}`;
   const needsXe = /[\u0600-\u06ff]/u.test(text) || /\\usepackage\s*\{\s*(?:xepersian|fontspec)\s*\}/u.test(text);
   const needsXepersian = needsXe && !/\\usepackage\s*\{\s*xepersian\s*\}/u.test(effectivePreamble) && /[\u0600-\u06ff]/u.test(source);
   const language = needsXepersian ? `\\usepackage{xepersian}\n\\settextfont{${escapeTex(settings.persianFont)}}\n` : "";
-  const hasDocumentWrapper = /\\begin\{document\}/u.test(body);
+
+  // A complete TeX document owns its own document environment. Preserve it,
+  // but merge the resolver-generated preamble into its existing preamble.
+  if (/^\\documentclass\b/u.test(body) && /\\begin\{document\}/u.test(body)) {
+    const documentIndex = body.search(/\\begin\{document\}/u);
+    const documentBody = body.slice(documentIndex);
+    const ownPreamble = body.slice(0, documentIndex);
+    const ownClass = ownPreamble.match(/^\\documentclass(?:\[[^\]]*\])?\{[^}]+\}\s*/u)?.[0] ?? "\\documentclass{standalone}\n";
+    const rest = ownPreamble.slice(ownClass.length).trim();
+    const merged = [ownClass.trimEnd(), effectivePreamble.trim(), rest, language.trim()].filter(Boolean).join("\n");
+    return `${merged}\n${documentBody}\n`;
+  }
+
   const hasPictureEnvironment = /\\begin\{(?:tikzpicture|circuitikz|pgfonlayer)\}/u.test(body);
   const hasStandalonePgfplotsEnvironment = /\\begin\{(?:axis|semilogxaxis|semilogyaxis|loglogaxis)\}/u.test(body);
-  const wrapper = hasDocumentWrapper || hasPictureEnvironment ? body : hasStandalonePgfplotsEnvironment ? `\\begin{tikzpicture}\n${body}\n\\end{tikzpicture}` : `\\begin{tikzpicture}\n${body}\n\\end{tikzpicture}`;
-  return `\\documentclass{${needsXe ? "article" : "standalone"}}\n${effectivePreamble}\n${language}\\begin{document}\n${wrapper}\n\\end{document}\n`;
+  const hasDisplayMathEnvironment = /\\begin\{(?:equation\*?|align\*?|alignat\*?|gather\*?|multline\*?|flalign\*?|split|cases|matrix\*?|pmatrix|bmatrix|Bmatrix|vmatrix|Vmatrix)\}/u.test(body);
+  const hasGeneralTexEnvironment = /\\begin\{(?:minipage|tabular|array|itemize|enumerate|description|verbatim|lstlisting|theorem|proof|quote|quotation|center|flushleft|flushright)\}/u.test(body);
+  const hasTikzCommands = /(?:^|\n)\s*\\(?:draw|path|fill|filldraw|shade|shadedraw|clip|node|coordinate|matrix|pic|graph|foreach|spy|pattern|useasboundingbox)\b/u.test(body);
+
+  let wrapper: string;
+  if (hasPictureEnvironment || hasStandalonePgfplotsEnvironment || hasDisplayMathEnvironment || hasGeneralTexEnvironment) {
+    wrapper = body;
+  } else if (hasTikzCommands || /^\\(?:tikz|tikzset|usetikzlibrary|pgfkeys|pgfplotsset)\b/u.test(body)) {
+    wrapper = `\\begin{tikzpicture}\n${body}\n\\end{tikzpicture}`;
+  } else {
+    // The markdown block may be ordinary TeX/LaTeX. Do not force arbitrary
+    // TeX environments into a tikzpicture; that corrupts grouping and causes
+    // errors such as "Missing \\endgroup" at the end of gather/align.
+    wrapper = body;
+  }
+
+  const documentClass = needsXe || hasDisplayMathEnvironment || hasGeneralTexEnvironment ? "article" : "standalone";
+  return `\\documentclass{${documentClass}}\n${effectivePreamble}\n${language}\\begin{document}\n${wrapper}\n\\end{document}\n`;
 }
 
 export function compilerArgs(tex: string, work: string, outputType: EnginePlan["outputType"] = "pdf"): string[] {
