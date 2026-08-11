@@ -32,7 +32,6 @@ export class TikzRendererView {
     const controls = shell.createDiv({ cls: "tikz-renderer-controls" });
     const menu = controls.createEl("button", { cls: "tikz-renderer-menu", attr: { "aria-label": "TikZ controls", "aria-expanded": "false", type: "button", title: "TikZ controls" } });
     menu.textContent = "⋯";
-
     const panel = shell.createDiv({ cls: "tikz-renderer-panel" });
     panel.hidden = true;
     panel.setAttribute("role", "menu");
@@ -42,12 +41,11 @@ export class TikzRendererView {
     const assetLink = viewport.createEl("a", { cls: "tikz-renderer-asset-link", attr: { href: "#", "aria-label": "Open TikZ SVG asset", title: "Open rendered SVG" } });
     const img = assetLink.createEl("img", { cls: "tikz-renderer-svg", attr: { alt: "TikZ diagram", draggable: "false" } });
     img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(this.result.svg)}`;
-    const openAsset = (event: Event): void => {
+    assetLink.addEventListener("click", (event) => {
       event.preventDefault();
       event.stopPropagation();
       if (this.result.assetPath) this.app.workspace.openLinkText(this.result.assetPath, this.sourcePath, false);
-    };
-    assetLink.addEventListener("click", openAsset);
+    });
 
     let zoom = Math.min(5, Math.max(0.25, this.getSettings().defaultZoom / 100));
     let x = 0;
@@ -55,7 +53,6 @@ export class TikzRendererView {
     let dragging = false;
     let lastX = 0;
     let lastY = 0;
-
     const clampZoom = (value: number): number => Math.min(5, Math.max(0.25, value));
     const apply = (): void => {
       img.style.transform = `translate3d(${x}px, ${y}px, 0) scale(${zoom})`;
@@ -73,13 +70,12 @@ export class TikzRendererView {
     };
 
     const closePanel = (): void => { panel.hidden = true; menu.setAttribute("aria-expanded", "false"); };
-    const togglePanel = (event: Event): void => {
+    menu.addEventListener("click", (event) => {
       event.preventDefault();
       event.stopPropagation();
       panel.hidden = !panel.hidden;
       menu.setAttribute("aria-expanded", `${!panel.hidden}`);
-    };
-    menu.addEventListener("click", togglePanel);
+    });
 
     const ownerDocument = this.host.ownerDocument;
     const outsideClick = (event: MouseEvent): void => {
@@ -88,17 +84,15 @@ export class TikzRendererView {
     };
     ownerDocument.addEventListener("click", outsideClick, true);
 
-    const addButton = (label: string, action: () => void | Promise<void>): HTMLButtonElement => {
+    const addButton = (label: string, action: () => void | Promise<void>): void => {
       const button = panel.createEl("button", { text: label, attr: { type: "button", role: "menuitem" } });
       button.addEventListener("click", (event) => { event.preventDefault(); event.stopPropagation(); void action(); });
-      return button;
     };
-
     addButton("Zoom −", () => { zoom = clampZoom(zoom - 0.25); apply(); });
     addButton("Zoom +", () => { zoom = clampZoom(zoom + 0.25); apply(); });
     addButton("Reset view", resetView);
     addButton("Fit", fit);
-    addButton("Theme", () => this.renderThemeMenu(panel, closePanel));
+    addButton("Theme", () => this.renderThemeMenu(panel, shell, closePanel));
     addButton("Edit source", () => new TikzSourceModal(this.app, this.source, async (next) => this.editSource(next)).open());
     addButton("History", () => this.showHistory(panel));
     addButton("Re-render", async () => {
@@ -151,8 +145,7 @@ export class TikzRendererView {
     viewport.addEventListener("pointerup", stopDragging);
     viewport.addEventListener("pointercancel", stopDragging);
     viewport.addEventListener("lostpointercapture", stopDragging);
-
-    const wheel = (event: WheelEvent): void => {
+    viewport.addEventListener("wheel", (event) => {
       const nextZoom = clampZoom(zoom * (event.deltaY < 0 ? 1.12 : 1 / 1.12));
       if (nextZoom === zoom) return;
       const rect = viewport.getBoundingClientRect();
@@ -164,14 +157,12 @@ export class TikzRendererView {
       zoom = nextZoom;
       apply();
       event.preventDefault();
-    };
-    viewport.addEventListener("wheel", wheel, { passive: false });
+    }, { passive: false });
     img.addEventListener("load", () => { if (zoom === 1) fit(); }, { once: true });
 
     this.applyTheme(shell);
     const observer = this.installThemeObserver(shell);
     apply();
-
     this.cleanup = () => {
       ownerDocument.removeEventListener("click", outsideClick, true);
       observer?.disconnect();
@@ -179,7 +170,7 @@ export class TikzRendererView {
     };
   }
 
-  private renderThemeMenu(panel: HTMLElement, closePanel: () => void): void {
+  private renderThemeMenu(panel: HTMLElement, shell: HTMLElement, closePanel: () => void): void {
     panel.empty();
     panel.createDiv({ cls: "tikz-renderer-panel-title", text: "Theme" });
     const themes: Array<[DisplayTheme, string]> = [["auto", "Auto"], ["obsidian", "Obsidian"], ["light", "Light"], ["paper", "Paper"], ["dark", "Dark"], ["contrast", "Contrast"], ["bw", "Black & white"], ["custom", "Custom"]];
@@ -195,9 +186,12 @@ export class TikzRendererView {
     }
     if (this.getSettings().displayTheme === "custom") {
       const color = panel.createEl("input", { attr: { type: "color", value: this.getSettings().customBackgroundColor, "aria-label": "Custom background color" } });
-      color.addEventListener("change", async () => { await this.saveSettings({ ...this.getSettings(), customBackgroundColor: color.value }); this.applyTheme(this.host); });
+      color.addEventListener("change", async () => {
+        await this.saveSettings({ ...this.getSettings(), customBackgroundColor: color.value });
+        this.applyTheme(shell);
+      });
       const opacity = panel.createEl("input", { attr: { type: "range", min: "10", max: "100", step: "1", value: `${this.getSettings().customBackgroundOpacity}`, "aria-label": "Custom background opacity" } });
-      opacity.addEventListener("input", () => this.host.style.setProperty("--tikz-custom-bg-opacity", `${Number(opacity.value) / 100}`));
+      opacity.addEventListener("input", () => shell.style.setProperty("--tikz-custom-bg-opacity", `${Number(opacity.value) / 100}`));
       opacity.addEventListener("change", async () => { await this.saveSettings({ ...this.getSettings(), customBackgroundOpacity: Number(opacity.value) }); });
     }
   }
