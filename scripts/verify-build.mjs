@@ -28,7 +28,7 @@ const livePreview = await readFile("src/editor/live-preview.ts", "utf8");
 if (livePreview.includes("svgDataUri") || livePreview.includes('createEl(\"img\"')) throw new Error("Live Preview must not rasterize TikZ SVG through an image data URI.");
 
 const processor = await readFile("src/markdown/code-block.ts", "utf8");
-if (!processor.includes("[[${assetPath}]]")) throw new Error("TikZ processor must create a real Obsidian wikilink for the generated SVG.");
+if (!processor.includes("const wikilink = `[[${assetPath}]]`;")) throw new Error("TikZ processor must create a real Obsidian wikilink for the generated SVG.");
 if (!processor.includes("ensureSourceAssetLink")) throw new Error("TikZ processor is missing source asset-link synchronization.");
 
 const css = await readFile("styles.css", "utf8");
