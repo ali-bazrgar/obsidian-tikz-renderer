@@ -90,9 +90,19 @@ export class TikzRendererView extends MarkdownRenderChild {
     const resetView = (): void => { if (isReadingMode()) return; zoom = clampZoom(settings.defaultZoom / 100); panX = 0; panY = 0; viewportHeight = clampViewportHeight(naturalHeight * zoom); persistEditViewState(); applyZoom(); };
     const fit = (): void => { if (isReadingMode() || !ensureIntrinsicSize()) return; const width = getViewportWidth(); zoom = clampZoom(Math.min(1, width / naturalWidth)); panX = 0; panY = 0; viewportHeight = clampViewportHeight(naturalHeight * zoom); persistEditViewState(); applyZoom(); };
     const addButton = (label: string, action: () => void | Promise<void>): void => { const b = panel.createEl("button", { text: label, attr: { type: "button", role: "menuitem" } }); b.addEventListener("click", e => { e.preventDefault(); e.stopPropagation(); void action(); }); };
+    const exportPng = async (): Promise<void> => {
+      if (isReadingMode()) return;
+      ensureViewportSize();
+      clampCurrentPan();
+      const width = getViewportWidth();
+      const height = getViewportHeight();
+      const backgroundColor = win?.getComputedStyle(viewport).backgroundColor ?? "transparent";
+      const renderedSvg = createRenderedSvgSnapshot(svg, win);
+      await this.exportService.savePngSnapshot(renderedSvg, this.result.hash, this.sourcePath, width, height, zoom, panX, panY, backgroundColor);
+    };
     const showAssetActions = (): void => { const path = this.result.assetPath; if (!path) return; const links = panel.createDiv({ cls: "tikz-renderer-asset-links" }); links.createEl("a", { text: `SVG: ${path}`, attr: { href: "#" } }).addEventListener("click", e => { e.preventDefault(); this.app.workspace.openLinkText(path, this.sourcePath, false); }); links.createEl("button", { text: "Copy SVG wikilink", attr: { type: "button" } }).addEventListener("click", async e => { e.preventDefault(); e.stopPropagation(); await navigator.clipboard.writeText(`[[${path}]]`); new Notice("SVG wikilink copied."); }); };
     const renderThemeMenu = (): void => { panel.empty(); panel.createDiv({ cls: "tikz-renderer-panel-title", text: "Theme" }); const themes: Array<[DisplayTheme, string]> = [["auto", "Auto"], ["obsidian", "Obsidian"], ["light", "Light"], ["paper", "Paper"], ["dark", "Dark"], ["contrast", "Contrast"], ["bw", "Black & white"], ["custom", "Custom"]]; for (const [theme, label] of themes) { const b = panel.createEl("button", { text: label, attr: { type: "button", role: "menuitemradio", "aria-checked": `${themeState.displayTheme === theme}` } }); b.addEventListener("click", e => { e.preventDefault(); e.stopPropagation(); themeState.displayTheme = theme; persistTheme(); if (theme === "custom") renderThemeMenu(); else closePanel(); }); } if (themeState.displayTheme === "custom") { const color = panel.createEl("input", { attr: { type: "color", value: themeState.customBackgroundColor } }); color.addEventListener("change", () => { themeState.customBackgroundColor = color.value; persistTheme(); }); const opacity = panel.createEl("input", { attr: { type: "range", min: "10", max: "100", value: `${themeState.customBackgroundOpacity}` } }); opacity.addEventListener("input", () => { themeState.customBackgroundOpacity = Number(opacity.value); applyTheme(); }); opacity.addEventListener("change", () => persistTheme()); } panel.createEl("button", { text: "Back", attr: { type: "button" } }).addEventListener("click", e => { e.preventDefault(); e.stopPropagation(); buildMainPanel(); }); positionPanel(); };
-    const buildMainPanel = (): void => { panel.empty(); panel.createDiv({ cls: "tikz-renderer-panel-title", text: "TikZ controls" }); addButton("Zoom −", () => { if (isReadingMode()) return; const oldZoom = zoom; const nextZoom = clampZoom(oldZoom - .25); if (nextZoom !== oldZoom) zoom = nextZoom; persistEditViewState(); applyZoom(); }); addButton("Zoom +", () => { if (isReadingMode()) return; const oldZoom = zoom; const nextZoom = clampZoom(oldZoom + .25); if (nextZoom !== oldZoom) zoom = nextZoom; persistEditViewState(); applyZoom(); }); addButton("Reset view", resetView); addButton("Fit", fit); addButton("Theme", renderThemeMenu); addButton("Edit source", () => new TikzSourceModal(this.app, this.source, async next => this.editSource(next)).open()); addButton("History", () => { panel.empty(); panel.createDiv({ cls: "tikz-renderer-panel-title", text: "History" }); const entries = this.history.list(this.historyKey); for (const [i, entry] of entries.entries()) { const row = panel.createDiv({ cls: "tikz-history-row" }); row.createSpan({ text: `Version ${entries.length - i}` }); row.createSpan({ text: new Date(entry.timestamp).toLocaleString() }); if (entry.source !== this.source) row.createEl("button", { text: "Restore", attr: { type: "button" } }).addEventListener("click", () => new TikzSourceModal(this.app, entry.source, async next => this.editSource(next)).open()); } panel.createEl("button", { text: "Back", attr: { type: "button" } }).addEventListener("click", () => buildMainPanel()); }); addButton("Re-render", async () => { const next = await this.service.render(this.source, this.kind); this.result.svg = next.svg; this.result.hash = next.hash; this.result.engine = next.engine; this.result.fromCache = next.fromCache; this.result.assetPath = await this.exportService.saveSvg(next.svg, next.hash, this.sourcePath, false); closePanel(); this.render(); }); addButton("Copy source", async () => { await navigator.clipboard.writeText(this.source); new Notice("TikZ source copied."); }); if (this.result.assetPath) showAssetActions(); };
+    const buildMainPanel = (): void => { panel.empty(); panel.createDiv({ cls: "tikz-renderer-panel-title", text: "TikZ controls" }); addButton("Zoom −", () => { if (isReadingMode()) return; const oldZoom = zoom; const nextZoom = clampZoom(oldZoom - .25); if (nextZoom !== oldZoom) zoom = nextZoom; persistEditViewState(); applyZoom(); }); addButton("Zoom +", () => { if (isReadingMode()) return; const oldZoom = zoom; const nextZoom = clampZoom(oldZoom + .25); if (nextZoom !== oldZoom) zoom = nextZoom; persistEditViewState(); applyZoom(); }); addButton("Reset view", resetView); addButton("Fit", fit); addButton("Theme", renderThemeMenu); addButton("Export PNG", exportPng); addButton("Edit source", () => new TikzSourceModal(this.app, this.source, async next => this.editSource(next)).open()); addButton("History", () => { panel.empty(); panel.createDiv({ cls: "tikz-renderer-panel-title", text: "History" }); const entries = this.history.list(this.historyKey); for (const [i, entry] of entries.entries()) { const row = panel.createDiv({ cls: "tikz-history-row" }); row.createSpan({ text: `Version ${entries.length - i}` }); row.createSpan({ text: new Date(entry.timestamp).toLocaleString() }); if (entry.source !== this.source) row.createEl("button", { text: "Restore", attr: { type: "button" } }).addEventListener("click", () => new TikzSourceModal(this.app, entry.source, async next => this.editSource(next)).open()); } panel.createEl("button", { text: "Back", attr: { type: "button" } }).addEventListener("click", () => buildMainPanel()); }); addButton("Re-render", async () => { const next = await this.service.render(this.source, this.kind); this.result.svg = next.svg; this.result.hash = next.hash; this.result.engine = next.engine; this.result.fromCache = next.fromCache; this.result.assetPath = await this.exportService.saveSvg(next.svg, next.hash, this.sourcePath, false); closePanel(); this.render(); }); addButton("Copy source", async () => { await navigator.clipboard.writeText(this.source); new Notice("TikZ source copied."); }); if (this.result.assetPath) showAssetActions(); };
     const openPanel = (): void => { if (!shell.isConnected || controls.hidden || isReadingMode()) return; panel.hidden = false; menu.setAttribute("aria-expanded", "true"); menu.setAttribute("data-open", "true"); buildMainPanel(); positionPanel(); };
     const togglePanel = (e: Event): void => { e.preventDefault(); e.stopPropagation(); if (isReadingMode()) return; if (panel.hidden) openPanel(); else closePanel(); };
     menu.addEventListener("pointerdown", togglePanel); menu.addEventListener("keydown", e => { if ((e.key === "Enter" || e.key === " ") && !isReadingMode()) togglePanel(e); });
@@ -157,6 +167,35 @@ export class TikzRendererView extends MarkdownRenderChild {
   onunload(): void { this.cleanup?.(); this.containerEl.empty(); }
   dispose(emptyContainer = true): void { this.cleanup?.(); if (emptyContainer && this.containerEl.isConnected) this.containerEl.empty(); }
   static disposeAll(): void { for (const view of Array.from(this.allViews)) view.dispose(true); this.activeViews.clear(); this.allViews.clear(); }
+}
+
+function createRenderedSvgSnapshot(svg: SVGSVGElement, win: Window | null): string {
+  const snapshot = svg.cloneNode(true) as SVGSVGElement;
+  const sourceElements = [svg, ...Array.from(svg.querySelectorAll<SVGElement>("*"))];
+  const snapshotElements = [snapshot, ...Array.from(snapshot.querySelectorAll<SVGElement>("*"))];
+  const properties = [
+    "fill", "fill-opacity", "fill-rule", "stroke", "stroke-opacity", "stroke-width", "stroke-linecap", "stroke-linejoin", "stroke-miterlimit", "stroke-dasharray", "stroke-dashoffset",
+    "color", "opacity", "filter", "font-family", "font-size", "font-style", "font-weight", "text-anchor", "dominant-baseline", "display", "visibility", "shape-rendering", "paint-order"
+  ];
+  if (win) {
+    const count = Math.min(sourceElements.length, snapshotElements.length);
+    for (let i = 0; i < count; i++) {
+      const sourceElement = sourceElements[i];
+      const snapshotElement = snapshotElements[i];
+      const computed = win.getComputedStyle(sourceElement);
+      for (const property of properties) {
+        const value = computed.getPropertyValue(property);
+        if (value) snapshotElement.style.setProperty(property, value);
+      }
+    }
+  }
+  snapshot.removeAttribute("class");
+  snapshot.removeAttribute("role");
+  snapshot.removeAttribute("aria-label");
+  snapshot.removeAttribute("draggable");
+  snapshot.style.transform = "none";
+  snapshot.style.maxWidth = "none";
+  return new XMLSerializer().serializeToString(snapshot);
 }
 
 function detectTheme(doc: Document): string { if (doc.body.classList.contains("theme-dark")) return "dark"; if (doc.body.classList.contains("theme-light")) return "light"; return "obsidian"; }

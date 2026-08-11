@@ -14,10 +14,20 @@ export class ExportService {
   }
 
   async savePng(svg: string, hash: string, sourcePath?: string): Promise<string> {
-    const folder = this.resolveAssetFolder(sourcePath);
+    const folder = normalizePath(`${this.resolveAssetFolder(sourcePath)}/PNG`);
     await this.ensureVaultFolder(folder);
     const relativePng = normalizePath(`${folder}/${hash}.png`);
     const png = await svgToPng(svg, 2);
+    await this.app.vault.adapter.writeBinary(relativePng, png);
+    new Notice(`TikZ PNG saved: ${relativePng}`);
+    return relativePng;
+  }
+
+  async savePngSnapshot(svg: string, hash: string, sourcePath: string, viewportWidth: number, viewportHeight: number, zoom: number, panX: number, panY: number, backgroundColor: string): Promise<string> {
+    const folder = normalizePath(`${this.resolveAssetFolder(sourcePath)}/PNG`);
+    await this.ensureVaultFolder(folder);
+    const relativePng = normalizePath(`${folder}/${hash}.png`);
+    const png = await svgToPngSnapshot(svg, 2, viewportWidth, viewportHeight, zoom, panX, panY, backgroundColor);
     await this.app.vault.adapter.writeBinary(relativePng, png);
     new Notice(`TikZ PNG saved: ${relativePng}`);
     return relativePng;
@@ -47,12 +57,7 @@ async function svgToPng(svg: string, scale: number): Promise<ArrayBuffer> {
   const blob = new Blob([svg], { type: "image/svg+xml;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   try {
-    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
-      const img = new Image();
-      img.onload = () => resolve(img);
-      img.onerror = () => reject(new Error("The generated SVG could not be rasterized for PNG export."));
-      img.src = url;
-    });
+    const image = await loadSvgImage(url);
     const intrinsicWidth = image.naturalWidth || parseSvgDimension(svg, "width") || 800;
     const intrinsicHeight = image.naturalHeight || parseSvgDimension(svg, "height") || 600;
     const canvas = document.createElement("canvas");
@@ -61,11 +66,62 @@ async function svgToPng(svg: string, scale: number): Promise<ArrayBuffer> {
     const context = canvas.getContext("2d");
     if (!context) throw new Error("Canvas 2D context is unavailable for PNG export.");
     context.drawImage(image, 0, 0, canvas.width, canvas.height);
-    const pngBlob = await new Promise<Blob>((resolve, reject) => canvas.toBlob((value) => value ? resolve(value) : reject(new Error("Canvas PNG encoding failed.")), "image/png"));
-    return await pngBlob.arrayBuffer();
+    return await canvasToPng(canvas);
   } finally {
     URL.revokeObjectURL(url);
   }
+}
+
+async function svgToPngSnapshot(svg: string, scale: number, viewportWidth: number, viewportHeight: number, zoom: number, panX: number, panY: number, backgroundColor: string): Promise<ArrayBuffer> {
+  if (typeof document === "undefined" || typeof Image === "undefined" || typeof Blob === "undefined" || typeof URL === "undefined") {
+    throw new Error("PNG export is only available in the Obsidian Desktop renderer environment.");
+  }
+  const blob = new Blob([svg], { type: "image/svg+xml;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  try {
+    const image = await loadSvgImage(url);
+    const intrinsicWidth = image.naturalWidth || parseSvgDimension(svg, "width") || 800;
+    const intrinsicHeight = image.naturalHeight || parseSvgDimension(svg, "height") || 600;
+    const width = Math.max(1, Math.min(8192, Math.ceil(viewportWidth * scale)));
+    const height = Math.max(1, Math.min(8192, Math.ceil(viewportHeight * scale)));
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("Canvas 2D context is unavailable for PNG export.");
+    if (backgroundColor && backgroundColor !== "transparent") {
+      context.fillStyle = backgroundColor;
+      context.fillRect(0, 0, width, height);
+    }
+    const safeZoom = Number.isFinite(zoom) && zoom > 0 ? zoom : 1;
+    const safePanX = Number.isFinite(panX) ? panX : 0;
+    const safePanY = Number.isFinite(panY) ? panY : 0;
+    context.drawImage(image, safePanX * scale, safePanY * scale, intrinsicWidth * safeZoom * scale, intrinsicHeight * safeZoom * scale);
+    return await canvasToPng(canvas);
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+function loadSvgImage(url: string): Promise<HTMLImageElement> {
+  return new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("The generated SVG could not be rasterized for PNG export."));
+    image.src = url;
+  });
+}
+
+function canvasToPng(canvas: HTMLCanvasElement): Promise<ArrayBuffer> {
+  return new Promise<ArrayBuffer>((resolve, reject) => {
+    canvas.toBlob(async (value) => {
+      if (!value) {
+        reject(new Error("Canvas PNG encoding failed."));
+        return;
+      }
+      resolve(await value.arrayBuffer());
+    }, "image/png");
+  });
 }
 
 function parseSvgDimension(svg: string, name: "width" | "height"): number | undefined {
