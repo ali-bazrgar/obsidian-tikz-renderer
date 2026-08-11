@@ -22,7 +22,7 @@ export class TikzMarkdownProcessor {
       const result = await service.render(source, kind);
       if (!el.isConnected) return;
       result.assetPath = await exportService.saveSvg(result.svg, result.hash, ctx.sourcePath, false);
-      if (section) await ensureSourceAssetLinks(app, ctx.sourcePath, section, result.assetPath, historyKey);
+      if (section) await ensureSourceAssetLinks(app, ctx.sourcePath, section, result.assetPath, historyKey, kind);
       const edit = async (): Promise<void> => replaceSource(app, ctx, el, kind, source);
       const view = new TikzRendererView(app, exportService, host, result, source, ctx.sourcePath, service, kind, history, historyKey, async nextSource => replaceSource(app, ctx, el, kind, nextSource), getSettings, saveSettings);
       ctx.addChild(view);
@@ -77,36 +77,39 @@ function markGeneratedLinks(el: HTMLElement, assetPath: string, historyKey: stri
   }
 }
 
-async function ensureSourceAssetLinks(app: App, sourcePath: string, section: MarkdownSectionInformation, assetPath: string, historyKey: string): Promise<void> {
+async function ensureSourceAssetLinks(app: App, sourcePath: string, section: MarkdownSectionInformation, assetPath: string, historyKey: string, kind: BlockKind): Promise<void> {
   const file = app.vault.getFileByPath(sourcePath);
   if (!(file instanceof TFile) || !assetPath) return;
   const wikilink = `[[${assetPath}]]`;
-  const generatedEditMarker = `#tikz-edit:${historyKey}`;
   await app.vault.process(file, data => {
     const eol = data.includes("\r\n") ? "\r\n" : "\n";
     const lines = data.split(/\r?\n/u);
-    // The renderer owns source editing now. Remove both current and legacy
-    // plugin-generated Edit TikZ lines. The target must contain the private
-    // tikz-edit marker, so ordinary user links are never touched.
+    // Remove plugin-generated asset links and all legacy Edit TikZ links first.
     for (let index = lines.length - 1; index >= 0; index -= 1) {
       const trimmed = lines[index].trim();
-      if (trimmed.includes(generatedEditMarker) || /^\[✎\s*Edit TikZ\]\(\s*#tikz-edit\\?:/u.test(trimmed)) lines.splice(index, 1);
-      else if (trimmed === wikilink) lines.splice(index, 1);
+      if (trimmed === wikilink || /\[✎\s*Edit TikZ\]\(\s*#tikz-edit\\?:/u.test(trimmed)) lines.splice(index, 1);
     }
-    const insertionOffset = findNthLineOffset(data, section.lineEnd + 1);
-    const insertionLine = Math.min(lineIndexAtOffset(data, insertionOffset), lines.length);
-    lines.splice(insertionLine, 0, wikilink);
+    // Re-locate the exact fenced block after removals. Never insert anything
+    // into the fence itself; the generated asset link belongs immediately after
+    // the closing fence so Obsidian renders it as an ordinary note link.
+    const startLine = Math.max(0, Math.min(section.lineStart, lines.length - 1));
+    let open = -1;
+    for (let i = startLine; i < lines.length; i += 1) {
+      if (lines[i].trimEnd() === `\`\`\`${kind}`) { open = i; break; }
+      if (i > startLine + 4 && lines[i].trim() !== "") break;
+    }
+    if (open < 0) return data;
+    let close = -1;
+    for (let i = open + 1; i < lines.length; i += 1) {
+      if (lines[i].trim() === "```") { close = i; break; }
+    }
+    if (close < 0) return data;
+    lines.splice(close + 1, 0, wikilink);
     return lines.join(eol);
   });
 }
 
-function lineIndexAtOffset(text: string, offset: number): number { let line = 0; for (let index = 0; index < offset && index < text.length; index += 1) if (text[index] === "\n") line += 1; return line; }
-
 function makeHistoryKey(ctx: MarkdownPostProcessorContext, section: MarkdownSectionInformation | null, kind: BlockKind, source: string): string {
-  // Canonicalize line endings and trailing whitespace so Live Preview and
-  // Reading View cannot accidentally create different identities for the same
-  // TikZ block. The identity deliberately does not depend on mutable section
-  // line numbers or generated links.
   const canonicalSource = source.replace(/\r\n/gu, "\n").replace(/[ \t]+$/gmu, "").trimEnd();
   const sourceHash = createHash("sha256").update(canonicalSource).digest("hex").slice(0, 32);
   return `${ctx.sourcePath}:${kind}:${sourceHash}`;
