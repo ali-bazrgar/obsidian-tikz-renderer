@@ -6,15 +6,12 @@ const production = process.argv[2] === "production";
 const result = await esbuild.build({
   entryPoints: ["src/main.ts"],
   bundle: true,
-  // Obsidian supplies these modules at runtime. Keeping CodeMirror external
-  // is intentional: embedding a second @codemirror/state or @codemirror/view
-  // instance can make instanceof-based extension checks fail.
-  external: [
-    "obsidian",
-    "electron",
-    "@codemirror/state",
-    "@codemirror/view",
-  ],
+  // CodeMirror is imported by the editor extension and must be present in the
+  // plugin bundle. Do not externalize @codemirror/*: an installed Obsidian
+  // plugin does not ship its development node_modules directory, so an
+  // externalized require() would fail at runtime. Duplicate-instance safety is
+  // handled by exact/pinned dependency versions plus bundle verification.
+  external: ["obsidian", "electron"],
   format: "cjs",
   platform: "node",
   target: "es2018",
