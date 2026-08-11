@@ -74,7 +74,22 @@ export default class TikzRendererPlugin extends Plugin {
     this.renderService?.dispose();
   }
 
-  async loadSettings(): Promise<void> { this.settings = { ...DEFAULT_SETTINGS, ...(await this.loadData() as Partial<TikzSettings>) }; }
+  async loadSettings(): Promise<void> {
+    const saved = await this.loadData() as Partial<TikzSettings> | null;
+    const merged = { ...DEFAULT_SETTINGS, ...(saved ?? {}) };
+
+    // Existing installations retain their saved preamble, so changing
+    // DEFAULT_PREAMBLE alone would not fix users who already opened the
+    // previous version. Only migrate the exact/characteristic heavy default;
+    // user-customized preambles are left untouched.
+    if (isLegacyHeavyDefaultPreamble(merged.preamble)) {
+      merged.preamble = DEFAULT_SETTINGS.preamble;
+    }
+
+    this.settings = merged;
+    if (saved && merged.preamble !== saved.preamble) await this.saveData(this.settings);
+  }
+
   async saveSettings(settings?: TikzSettings): Promise<void> { if (settings) this.settings = settings; await this.saveData(this.settings); this.syncRenderedTheme(); }
 
   async detectTeXExecutables(): Promise<ExecutableProbe[]> {
@@ -89,6 +104,22 @@ export default class TikzRendererPlugin extends Plugin {
     new Notice(summary, 10000);
     return results;
   }
+}
+
+function isLegacyHeavyDefaultPreamble(preamble: string | undefined): boolean {
+  if (!preamble) return false;
+  const requiredMarkers = [
+    "\\usepackage{pgfplots}",
+    "\\usepackage{circuitikz}",
+    "\\usepackage{tikz-cd}",
+    "\\usepackage{forest}",
+    "\\usepackage{smartdiagram}",
+    "\\usepackage{pgf-pie}",
+    "\\usepackage{pgfgantt}",
+    "\\pgfplotsset{compat=1.18}",
+    "\\usetikzlibrary{arrows,arrows.meta",
+  ];
+  return requiredMarkers.every((marker) => preamble.includes(marker));
 }
 
 class TikzSettingTab extends PluginSettingTab {
