@@ -27,7 +27,7 @@ export class TikzMarkdownProcessor {
       }, getSettings, saveSettings);
       ctx.addChild(view);
       view.render();
-      markGeneratedAssetLinkInReading(el, result.assetPath);
+      scheduleGeneratedAssetLinkMark(el, result.assetPath);
     } catch (error) {
       if (!el.isConnected) return;
       host.empty();
@@ -38,29 +38,29 @@ export class TikzMarkdownProcessor {
   }
 }
 
-/**
- * The source wikilink is a real Obsidian wikilink, so it remains available in
- * Source and Live Preview. Reading view receives only a DOM class; the source
- * file itself is never polluted with HTML or CSS-specific markup.
- */
-function markGeneratedAssetLinkInReading(el: HTMLElement, assetPath: string): void {
+function scheduleGeneratedAssetLinkMark(el: HTMLElement, assetPath: string): void {
   if (!assetPath) return;
-  const normalizedPath = assetPath.replace(/\\/gu, "/");
-  let sibling = el.nextElementSibling as HTMLElement | null;
-  for (let index = 0; sibling && index < 3; index += 1, sibling = sibling.nextElementSibling as HTMLElement | null) {
-    const links = Array.from(sibling.querySelectorAll<HTMLAnchorElement>("a.internal-link, a[href]"));
-    const generated = links.find((link) => {
-      const href = decodeURIComponent(link.getAttribute("href") ?? "").replace(/\\/gu, "/");
-      return href === normalizedPath || href.endsWith(`/${normalizedPath}`);
-    });
-    if (!generated) continue;
-    sibling.classList.add(GENERATED_ASSET_CLASS);
-    generated.classList.add(GENERATED_ASSET_CLASS);
-    return;
-  }
+  const mark = (): void => {
+    if (el.isConnected) markGeneratedAssetLinkInReading(el, assetPath);
+  };
+  window.setTimeout(mark, 0);
+  window.requestAnimationFrame(mark);
 }
 
-/** Add the real Obsidian wikilink immediately after the complete TikZ fence. */
+function markGeneratedAssetLinkInReading(el: HTMLElement, assetPath: string): void {
+  const normalizedPath = assetPath.replace(/\\/gu, "/");
+  const root = el.parentElement ?? el;
+  const links = Array.from(root.querySelectorAll<HTMLAnchorElement>("a.internal-link, a[href]"));
+  const generated = links.find((link) => {
+    const href = decodeURIComponent(link.getAttribute("href") ?? "").replace(/\\/gu, "/");
+    return href === normalizedPath || href.endsWith(`/${normalizedPath}`);
+  });
+  if (!generated) return;
+  generated.classList.add(GENERATED_ASSET_CLASS);
+  const wrapper = generated.closest("p, div, li") as HTMLElement | null;
+  if (wrapper && wrapper !== el) wrapper.classList.add(GENERATED_ASSET_CLASS);
+}
+
 async function ensureSourceAssetLink(app: App, sourcePath: string, section: MarkdownSectionInformation, assetPath: string): Promise<void> {
   const file = app.vault.getFileByPath(sourcePath);
   if (!(file instanceof TFile) || !assetPath) return;
