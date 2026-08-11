@@ -9,6 +9,7 @@ import { TikzSettings } from "../settings/settings";
 
 const GENERATED_ASSET_CLASS = "tikz-generated-asset-link";
 const GENERATED_EDIT_CLASS = "tikz-generated-edit-link";
+const GENERATED_SVG_WIKILINK = /^\[\[(?:.+\/)?[0-9a-f]{64}\.svg\]\]$/iu;
 
 export class TikzMarkdownProcessor {
   static async process(app: App, exportService: ExportService, history: TikzHistoryStore, kind: BlockKind, source: string, el: HTMLElement, ctx: MarkdownPostProcessorContext, service: RenderService, getSettings: () => TikzSettings, saveSettings: (settings: TikzSettings) => Promise<void>): Promise<void> {
@@ -84,10 +85,15 @@ async function ensureSourceAssetLinks(app: App, sourcePath: string, section: Mar
   await app.vault.process(file, data => {
     const eol = data.includes("\r\n") ? "\r\n" : "\n";
     const lines = data.split(/\r?\n/u);
+
+    // Generated SVG links are state, not source. Remove every previous
+    // renderer-generated SHA-256 SVG link before inserting the current one.
+    // This prevents one link from accumulating on every metadata/render pass.
     for (let index = lines.length - 1; index >= 0; index -= 1) {
       const trimmed = lines[index].trim();
-      if (trimmed === wikilink || /\[✎\s*Edit TikZ\]\(\s*#tikz-edit\\?:/u.test(trimmed)) lines.splice(index, 1);
+      if (GENERATED_SVG_WIKILINK.test(trimmed) || /\[✎\s*Edit TikZ\]\(\s*#tikz-edit\\?:/u.test(trimmed)) lines.splice(index, 1);
     }
+
     const startLine = Math.max(0, Math.min(section.lineStart, lines.length - 1));
     let open = -1;
     for (let i = startLine; i < lines.length; i += 1) {
