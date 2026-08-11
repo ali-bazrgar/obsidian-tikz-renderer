@@ -1,5 +1,6 @@
 import { App, normalizePath, Notice, Plugin, PluginSettingTab, Setting } from "obsidian";
 import { RenderService } from "./core/render-service";
+import { ExportService } from "./core/export-service";
 import { TikzHistoryStore } from "./core/history";
 import { DEFAULT_SETTINGS, TikzSettings } from "./settings/settings";
 import { BlockKind } from "./core/types";
@@ -12,17 +13,19 @@ const LANGUAGES: BlockKind[] = ["tikz", "pgfplots", "circuitikz", "tex", "latex"
 export default class TikzRendererPlugin extends Plugin {
   settings!: TikzSettings;
   renderService!: RenderService;
+  exportService!: ExportService;
   historyStore!: TikzHistoryStore;
 
   async onload(): Promise<void> {
     await this.loadSettings();
     this.renderService = new RenderService(this.app, () => this.settings);
+    this.exportService = new ExportService(this.app, () => this.settings.assetFolder);
     this.historyStore = new TikzHistoryStore(this.app, () => this.settings.historyLimit);
     this.registerEditorExtension(createTikzLivePreviewExtensions(this.renderService));
 
     for (const language of LANGUAGES) {
       this.registerMarkdownCodeBlockProcessor(language, (source, el, ctx) =>
-        TikzMarkdownProcessor.process(this.app, this.historyStore, language, source, el, ctx, this.renderService),
+        TikzMarkdownProcessor.process(this.app, this.exportService, this.historyStore, language, source, el, ctx, this.renderService),
       );
     }
 
@@ -41,10 +44,7 @@ export default class TikzRendererPlugin extends Plugin {
   async detectTeXExecutables(): Promise<void> {
     const rootCandidates = texLiveExecutableCandidates(this.settings.texLiveRoot);
     const detected = { ...this.settings };
-    const keys: Array<[keyof TikzSettings, keyof typeof rootCandidates]> = [
-      ["latexPath", "latex"], ["pdflatexPath", "pdflatex"], ["xelatexPath", "xelatex"], ["lualatexPath", "lualatex"],
-      ["dvilualatexPath", "dvilualatex"], ["dvisvgmPath", "dvisvgm"], ["mutoolPath", "mutool"],
-    ];
+    const keys: Array<[keyof TikzSettings, keyof typeof rootCandidates]> = [["latexPath", "latex"], ["pdflatexPath", "pdflatex"], ["xelatexPath", "xelatex"], ["lualatexPath", "lualatex"], ["dvilualatexPath", "dvilualatex"], ["dvisvgmPath", "dvisvgm"], ["mutoolPath", "mutool"]];
     for (const [setting, name] of keys) { const candidate = rootCandidates[name]; if (candidate) (detected as Record<string, unknown>)[setting] = candidate; }
     const fallback = await this.renderService.detectExecutables();
     await this.saveSettings({ ...detected, ...fallback }); new Notice("TeX executable detection complete.");
