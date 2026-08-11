@@ -18,10 +18,8 @@ export interface DependencyResolution {
 }
 
 /**
- * TeX Live is treated as the source of truth. kpsewhich resolves files using
- * the installed TeX Live tree, so the resolver never downloads or installs
- * anything. This is especially useful for a full TeX Live installation: a
- * dependency is added only to the block that actually needs it.
+ * TeX Live is the source of truth. kpsewhich resolves files from the installed
+ * TeX Live tree; this resolver never downloads or installs packages.
  */
 export class TeXDependencyResolver {
   constructor(private readonly texLiveRoot: string, private readonly compilerPath: string) {}
@@ -31,11 +29,9 @@ export class TeXDependencyResolver {
     const added: TeXDependency[] = [];
     const seen = new Set<string>();
     let attempts = 0;
-
-    // First pass: source-driven hints are already represented in initialPreamble.
-    // Subsequent passes are driven by the actual TeX error log.
     const maxRounds = 6;
     let currentLog = log ?? "";
+
     while (attempts < maxRounds) {
       attempts += 1;
       const candidates = this.extractCandidates(source, currentLog);
@@ -50,6 +46,11 @@ export class TeXDependencyResolver {
 
         if (candidate.kind === "package") {
           preamble = appendLine(preamble, `\\usepackage{${candidate.name}}`);
+          if (candidate.name === "pgfplots") {
+            // Make PGFPlots behavior deterministic across TeX Live installations.
+            // This is local to blocks that actually use PGFPlots.
+            preamble = appendLine(preamble, "\\pgfplotsset{compat=1.18}");
+          }
         } else {
           preamble = appendTikzLibrary(preamble, candidate.name);
         }
@@ -57,8 +58,6 @@ export class TeXDependencyResolver {
         changed = true;
       }
 
-      // No log means this is only a preflight pass. If nothing was added,
-      // return immediately rather than touching the compiler again.
       if (!currentLog || !changed) break;
       currentLog = "";
     }
@@ -73,34 +72,25 @@ export class TeXDependencyResolver {
   private extractCandidates(source: string, log: string): TeXDependency[] {
     const candidates: TeXDependency[] = [];
 
-    // Generic missing .sty: this covers packages that are not known to our
-    // static detector. kpsewhich decides whether the file is actually present.
-    for (const match of log.matchAll(/(?:File|file) [`']([^`']+\.sty)[`']\s+not found/giu)) {
+    for (const match of log.matchAll(/(?:File|file) [`']([^`']+\\.sty)[`']\\s+not found/giu)) {
       const file = match[1];
       const name = path.basename(file, ".sty");
       if (isSafeControlName(name)) candidates.push({ kind: "package", name, file });
     }
 
-    // TikZ libraries are ordinary TeX files named tikzlibrary<name>.code.tex.
-    for (const match of log.matchAll(/(?:File|file) [`'](tikzlibrary[^`']+\.code\.tex)[`']\s+not found/giu)) {
+    for (const match of log.matchAll(/(?:File|file) [`'](tikzlibrary[^`']+\\.code\\.tex)[`']\\s+not found/giu)) {
       const file = match[1];
       const name = file.slice("tikzlibrary".length, -".code.tex".length);
       if (isSafeLibraryName(name)) candidates.push({ kind: "library", name, file });
     }
 
-    // A number of packages report missing environments rather than their
-    // package file. Keep this table small and conservative; unknown errors are
-    // left untouched instead of guessing and mutating the user's preamble.
-    for (const match of log.matchAll(/Environment\s+([A-Za-z][A-Za-z0-9*_-]*)\s+undefined/gu)) {
+    for (const match of log.matchAll(/Environment\\s+([A-Za-z][A-Za-z0-9*_-]*)\\s+undefined/gu)) {
       const environment = match[1];
-      const mapped = ENVIRONMENT_PACKAGES[environment.replace(/\*$/, "")];
+      const mapped = ENVIRONMENT_PACKAGES[environment.replace(/\\*$/, "")];
       if (mapped) candidates.push(mapped);
     }
 
-    // The source is useful as a fallback when TeX reports an environment before
-    // it reaches the package's own error message.
     for (const candidate of sourceHints(source)) candidates.push(candidate);
-
     return dedupe(candidates);
   }
 
@@ -122,9 +112,7 @@ export class TeXDependencyResolver {
     const root = this.texLiveRoot.trim();
     if (root) {
       const candidates = texLiveExecutableCandidates(root) as Partial<Record<TeXExecutableName, string>>;
-      const compilerDir = this.compilerPath.includes("\\") || this.compilerPath.includes("/")
-        ? path.dirname(this.compilerPath)
-        : undefined;
+      const compilerDir = this.compilerPath.includes("\\") || this.compilerPath.includes("/") ? path.dirname(this.compilerPath) : undefined;
       return candidates.latex
         ? path.join(path.dirname(candidates.latex), process.platform === "win32" ? "kpsewhich.exe" : "kpsewhich")
         : compilerDir
@@ -132,9 +120,7 @@ export class TeXDependencyResolver {
           : process.platform === "win32" ? "kpsewhich.exe" : "kpsewhich";
     }
 
-    const compilerDir = this.compilerPath.includes("\\") || this.compilerPath.includes("/")
-      ? path.dirname(this.compilerPath)
-      : undefined;
+    const compilerDir = this.compilerPath.includes("\\") || this.compilerPath.includes("/") ? path.dirname(this.compilerPath) : undefined;
     return compilerDir
       ? path.join(compilerDir, process.platform === "win32" ? "kpsewhich.exe" : "kpsewhich")
       : process.platform === "win32" ? "kpsewhich.exe" : "kpsewhich";
@@ -168,9 +154,7 @@ function sourceHints(source: string): TeXDependency[] {
   return result;
 }
 
-function appendLine(preamble: string, line: string): string {
-  return `${preamble.trimEnd()}\n${line}\n`;
-}
+function appendLine(preamble: string, line: string): string { return `${preamble.trimEnd()}\n${line}\n`; }
 
 function appendTikzLibrary(preamble: string, library: string): string {
   const match = preamble.match(/\\usetikzlibrary\{([^}]*)\}/u);
@@ -190,14 +174,6 @@ function dedupe(items: TeXDependency[]): TeXDependency[] {
   });
 }
 
-function isSafeControlName(value: string): boolean {
-  return /^[A-Za-z][A-Za-z0-9_-]*$/u.test(value) && value.length <= 80;
-}
-
-function isSafeLibraryName(value: string): boolean {
-  return /^[A-Za-z0-9._-]+$/u.test(value) && value.length <= 100;
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
+function isSafeControlName(value: string): boolean { return /^[A-Za-z][A-Za-z0-9_-]*$/u.test(value) && value.length <= 80; }
+function isSafeLibraryName(value: string): boolean { return /^[A-Za-z0-9._-]+$/u.test(value) && value.length <= 100; }
+function escapeRegExp(value: string): string { return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
