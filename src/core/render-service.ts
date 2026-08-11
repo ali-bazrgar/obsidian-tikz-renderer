@@ -12,9 +12,9 @@ import { augmentPreamble } from "./tex-package-detector";
 import { TeXDependencyResolver } from "./tex-dependency-resolver";
 
 const execFileAsync = promisify(execFile);
-const PIPELINE_VERSION = "12-texlive-dependency-resolver-and-wrapper-fix";
+const PIPELINE_VERSION = "13-safe-texlive-resolver";
 const MAX_OUTPUT = 4 * 1024 * 1024;
-const MAX_DEPENDENCY_RETRIES = 6;
+const MAX_DEPENDENCY_RETRIES = 3;
 
 export class RenderError extends Error {
   constructor(message: string, readonly details?: string) { super(message); this.name = "RenderError"; }
@@ -22,7 +22,10 @@ export class RenderError extends Error {
 
 export class RenderService {
   private readonly inFlight = new Map<string, Promise<RenderResult>>();
-  private readonly limiter = new ConcurrencyLimiter(2);
+  // TeX Live is CPU/RAM intensive. Serializing compilation prevents several
+  // independent code blocks in one Obsidian render pass from spawning multiple
+  // TeX engines at once and freezing the desktop.
+  private readonly limiter = new ConcurrencyLimiter(1);
 
   constructor(private readonly app: App, private readonly getSettings: () => TikzSettings) {}
   dispose(): void { this.inFlight.clear(); }
@@ -183,11 +186,14 @@ export function buildDocument(source: string, settings: TikzSettings, preambleOv
   const needsXe = /[\u0600-\u06ff]/u.test(text) || /\\usepackage\s*\{\s*(?:xepersian|fontspec)\s*\}/u.test(text);
   const needsXepersian = needsXe && !/\\usepackage\s*\{\s*xepersian\s*\}/u.test(effectivePreamble) && /[\u0600-\u06ff]/u.test(source);
   const language = needsXepersian ? `\\usepackage{xepersian}\n\\settextfont{${escapeTex(settings.persianFont)}}\n` : "";
-  // axis is a pgfplots environment and must still live inside tikzpicture.
-  // circuitikz is itself a picture-like environment, while pgfonlayer is
-  // intentionally left unwrapped for compatibility with complete snippets.
+  const hasDocumentWrapper = /\\begin\{document\}/u.test(body);
   const hasPictureEnvironment = /\\begin\{(?:tikzpicture|circuitikz|pgfonlayer)\}/u.test(body);
-  const wrapper = hasPictureEnvironment ? body : `\\begin{tikzpicture}\n${body}\n\\end{tikzpicture}`;
+  const hasStandalonePgfplotsEnvironment = /\\begin\{(?:axis|semilogxaxis|semilogyaxis|loglogaxis)\}/u.test(body);
+  const wrapper = hasDocumentWrapper || hasPictureEnvironment
+    ? body
+    : hasStandalonePgfplotsEnvironment
+      ? `\\begin{tikzpicture}\n${body}\n\\end{tikzpicture}`
+      : `\\begin{tikzpicture}\n${body}\n\\end{tikzpicture}`;
   return `\\documentclass{${needsXe ? "article" : "standalone"}}\n${effectivePreamble}\n${language}\\begin{document}\n${wrapper}\n\\end{document}\n`;
 }
 
