@@ -38,7 +38,7 @@ const compactCss = css.replace(/\s+/g, "");
 if (!compactCss.includes('.tikz-renderer-panel[hidden]{display:none!important}')) throw new Error("CSS must force the popup to remain hidden until opened.");
 if (!compactCss.includes('.tikz-renderer-controls{position:absolute') || !compactCss.includes('left:-28px')) throw new Error("TikZ controls must be attached outside the left edge of the figure.");
 if (!compactCss.includes('.tikz-renderer-paper{position:relative;display:contents}')) throw new Error("The old visual paper layer must not create a second figure window.");
-if (!compactCss.includes('.markdown-preview-view.tikz-generated-asset-link{display:none!important') && !compactCss.includes('.markdown-preview-view.tikz-generated-asset-link{display:none!important')) throw new Error("Generated SVG wikilinks must be hidden only in Reading view.");
+if (!css.includes('.markdown-preview-view .tikz-generated-asset-link{display:none!important')) throw new Error("Generated SVG wikilinks must be hidden only in Reading view.");
 
 const manifest = JSON.parse(await readFile("manifest.json", "utf8"));
 const packageJson = JSON.parse(await readFile("package.json", "utf8"));
