@@ -1,4 +1,4 @@
-import { App, MarkdownPostProcessorContext, MarkdownSectionInformation, TFile } from "obsidian";
+import { App, MarkdownPostProcessorContext, MarkdownSectionInformation, Notice, TFile } from "obsidian";
 import { createHash } from "node:crypto";
 import { BlockKind } from "../core/types";
 import { RenderService } from "../core/render-service";
@@ -22,7 +22,7 @@ export class TikzMarkdownProcessor {
       const result = await service.render(source, kind);
       if (!el.isConnected) return;
       result.assetPath = await exportService.saveSvg(result.svg, result.hash, ctx.sourcePath, false);
-      if (section) await ensureSourceAssetLinks(app, ctx.sourcePath, section, result.assetPath);
+      if (section) await ensureSourceAssetLinks(app, ctx.sourcePath, section, result.assetPath, historyKey);
       const view = new TikzRendererView(app, exportService, host, result, source, ctx.sourcePath, service, kind, history, historyKey, async (nextSource) => {
         await replaceSource(app, ctx, el, kind, nextSource);
       }, getSettings, saveSettings);
@@ -60,11 +60,8 @@ function markGeneratedLinks(el: HTMLElement, assetPath: string, historyKey: stri
   });
   if (generated) generated.classList.add(GENERATED_ASSET_CLASS);
 
-  const editLink = links.find((link) => link.classList.contains(GENERATED_EDIT_CLASS) || link.getAttribute("data-tikz-edit") === historyKey);
-  if (editLink) return;
-  const candidates = links.filter((link) => link.getAttribute("href") === `#tikz-edit:${historyKey}`);
-  const candidate = candidates[0];
-  if (!candidate) return;
+  const candidate = links.find((link) => link.getAttribute("href") === `#tikz-edit:${historyKey}`);
+  if (!candidate || candidate.classList.contains(GENERATED_EDIT_CLASS)) return;
   candidate.classList.add(GENERATED_EDIT_CLASS);
   candidate.setAttribute("data-tikz-edit", historyKey);
   candidate.addEventListener("click", async (event) => {
@@ -74,23 +71,21 @@ function markGeneratedLinks(el: HTMLElement, assetPath: string, historyKey: stri
   });
 }
 
-async function ensureSourceAssetLinks(app: App, sourcePath: string, section: MarkdownSectionInformation, assetPath: string): Promise<void> {
+async function ensureSourceAssetLinks(app: App, sourcePath: string, section: MarkdownSectionInformation, assetPath: string, historyKey: string): Promise<void> {
   const file = app.vault.getFileByPath(sourcePath);
   if (!(file instanceof TFile) || !assetPath) return;
   const wikilink = `[[${assetPath}]]`;
-  const historyMarker = createHash("sha256").update(`${sourcePath}:${section.lineStart}-${section.lineEnd}`).digest("hex").slice(0, 16);
-  const editLink = `[✎ Edit TikZ](#tikz-edit:${historyMarker})`;
+  const editLink = `[✎ Edit TikZ](#tikz-edit:${historyKey})`;
   await app.vault.process(file, (data) => {
     const insertionOffset = findNthLineOffset(data, section.lineEnd + 1);
-    const before = data.slice(Math.max(0, insertionOffset - 800), insertionOffset);
-    const after = data.slice(insertionOffset, Math.min(data.length, insertionOffset + 800));
-    if (before.includes(wikilink) || after.startsWith(wikilink)) {
-      if (before.includes(editLink) || after.includes(editLink)) return data;
-      const eol = data.includes("\r\n") ? "\r\n" : "\n";
-      return `${data.slice(0, insertionOffset)}${editLink}${eol}${data.slice(insertionOffset)}`;
-    }
+    const before = data.slice(Math.max(0, insertionOffset - 1000), insertionOffset);
+    const after = data.slice(insertionOffset, Math.min(data.length, insertionOffset + 1000));
+    const hasAsset = before.includes(wikilink) || after.startsWith(wikilink);
+    const hasEdit = before.includes(editLink) || after.startsWith(editLink);
+    if (hasAsset && hasEdit) return data;
     const eol = data.includes("\r\n") ? "\r\n" : "\n";
-    return `${data.slice(0, insertionOffset)}${wikilink}${eol}${editLink}${eol}${data.slice(insertionOffset)}`;
+    const additions = `${hasAsset ? "" : wikilink + eol}${hasEdit ? "" : editLink + eol}`;
+    return `${data.slice(0, insertionOffset)}${additions}${data.slice(insertionOffset)}`;
   });
 }
 
