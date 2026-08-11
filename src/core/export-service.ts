@@ -1,16 +1,15 @@
-import { App, normalizePath, Notice } from "obsidian";
-import { promises as fs } from "node:fs";
+import { App, Notice, normalizePath } from "obsidian";
 import * as path from "node:path";
 
 export class ExportService {
   constructor(private readonly app: App, private readonly getAssetFolder: () => string) {}
 
-  async saveSvg(svg: string, hash: string, sourcePath?: string): Promise<string> {
+  async saveSvg(svg: string, hash: string, sourcePath?: string, notify = true): Promise<string> {
     const folder = this.resolveAssetFolder(sourcePath);
     await this.ensureVaultFolder(folder);
-    const file = this.uniqueName(folder, `${hash}.svg`);
+    const file = normalizePath(`${folder}/${hash}.svg`);
     await this.app.vault.adapter.write(file, svg);
-    new Notice(`TikZ SVG saved: ${file}`);
+    if (notify) new Notice(`TikZ SVG saved: ${file}`);
     return file;
   }
 
@@ -39,8 +38,6 @@ export class ExportService {
       if (!await this.app.vault.adapter.exists(current)) await this.app.vault.createFolder(current);
     }
   }
-
-  private uniqueName(folder: string, filename: string): string { return normalizePath(`${folder}/${filename}`); }
 }
 
 async function svgToPng(svg: string, scale: number): Promise<ArrayBuffer> {
