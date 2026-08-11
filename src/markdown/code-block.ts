@@ -58,7 +58,10 @@ function markGeneratedLinks(el: HTMLElement, assetPath: string, historyKey: stri
   for (const link of links) {
     const href = decodeURIComponent(link.getAttribute("href") ?? "").replace(/\\/gu, "/");
     const text = link.textContent?.trim().replace(/\\/gu, "/") ?? "";
-    if (href === normalizedPath || href.endsWith(`/${normalizedPath}`) || text === normalizedPath || text.endsWith(`/${normalizedPath}`)) link.classList.add(GENERATED_ASSET_CLASS);
+    if (href === normalizedPath || href.endsWith(`/${normalizedPath}`) || text === normalizedPath || text.endsWith(`/${normalizedPath}`)) {
+      link.classList.add(GENERATED_ASSET_CLASS);
+      link.dataset.tikzGenerated = historyKey;
+    }
     if (href === `#tikz-edit:${historyKey}` || text === "✎ Edit TikZ") {
       link.classList.add(GENERATED_EDIT_CLASS);
       link.dataset.tikzEdit = historyKey;
@@ -80,16 +83,18 @@ async function ensureSourceAssetLinks(app: App, sourcePath: string, section: Mar
   const wikilink = `[[${assetPath}]]`;
   const editLink = `[✎ Edit TikZ](#tikz-edit:${historyKey})`;
   await app.vault.process(file, data => {
-    const insertionOffset = findNthLineOffset(data, section.lineEnd + 1);
     const eol = data.includes("\r\n") ? "\r\n" : "\n";
     const lines = data.split(/\r?\n/u);
-    let insertionLine = lineIndexAtOffset(data, insertionOffset);
-    while (insertionLine < lines.length) {
-      const line = lines[insertionLine].trim();
-      if (line === wikilink || line === editLink || line.includes(`](#tikz-edit:${historyKey})`)) { lines.splice(insertionLine, 1); continue; }
-      if (line === "") { insertionLine += 1; continue; }
-      break;
+    const generatedEditMarker = `#tikz-edit:${historyKey}`;
+    // Remove every generated line for this exact TikZ block before inserting the
+    // canonical pair. This makes rerenders/reloads idempotent even when Obsidian
+    // changes section.lineEnd after the generated lines have been inserted.
+    for (let index = lines.length - 1; index >= 0; index -= 1) {
+      const trimmed = lines[index].trim();
+      if (trimmed === wikilink || trimmed === editLink || trimmed.includes(generatedEditMarker)) lines.splice(index, 1);
     }
+    const insertionOffset = findNthLineOffset(data, section.lineEnd + 1);
+    const insertionLine = Math.min(lineIndexAtOffset(data, insertionOffset), lines.length);
     lines.splice(insertionLine, 0, editLink, wikilink);
     return lines.join(eol);
   });
