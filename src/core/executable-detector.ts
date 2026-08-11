@@ -33,10 +33,40 @@ export async function probeAllExecutables(paths: Partial<Record<TeXExecutableNam
   return Promise.all(NAMES.map((name) => probeExecutable(name, paths[name] ?? name)));
 }
 
+/** Find TeX Live without assuming the user's drive letter or release year. */
+export async function discoverTeXLiveRoot(): Promise<string | undefined> {
+  const pathRoot = await findTeXExecutableOnPath("xelatex");
+  if (pathRoot) return pathRoot;
+
+  if (process.platform === "win32") {
+    for (const drive of ["C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P"]) {
+      for (let year = 2030; year >= 2015; year--) {
+        const root = `${drive}:\\texlive\\${year}`;
+        if (await fileExists(path.join(root, "bin", "windows", "xelatex.exe"))) return root;
+      }
+    }
+  }
+  return undefined;
+}
+
+async function findTeXExecutableOnPath(name: string): Promise<string | undefined> {
+  try {
+    const command = process.platform === "win32" ? "where.exe" : "which";
+    const result = await execFileAsync(command, [process.platform === "win32" ? `${name}.exe` : name], { timeout: 3000, windowsHide: true, maxBuffer: 128 * 1024 });
+    const executable = String(result.stdout).split(/\r?\n/u).map((x) => x.trim()).find(Boolean);
+    if (!executable) return undefined;
+    const normalized = path.normalize(executable);
+    const bin = path.dirname(normalized);
+    const marker = path.join("bin", process.platform === "win32" ? "windows" : process.platform === "darwin" ? "universal-darwin" : "x86_64-linux");
+    return bin.toLowerCase().endsWith(marker.toLowerCase()) ? path.dirname(path.dirname(bin)) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Accept either the TeX Live installation root (D:\\texlive\\2025) or its
- * Windows binary directory (D:\\texlive\\2025\\bin\\windows). This keeps
- * the setting forgiving while producing exactly one canonical executable path.
+ * Windows binary directory (D:\\texlive\\2025\\bin\\windows).
  */
 export function texLiveExecutableCandidates(root: string): Partial<Record<TeXExecutableName, string>> {
   const clean = path.normalize(root.trim().replace(/[\\/]+$/u, ""));
@@ -59,4 +89,8 @@ export async function validateExecutablePaths(paths: Partial<Record<TeXExecutabl
     if (value && await fs.stat(value).then((s) => s.isFile()).catch(() => false)) valid[name] = value;
   }
   return valid;
+}
+
+async function fileExists(file: string): Promise<boolean> {
+  return fs.stat(file).then((s) => s.isFile()).catch(() => false);
 }
