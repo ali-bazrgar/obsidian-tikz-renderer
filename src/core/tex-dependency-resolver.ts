@@ -52,7 +52,6 @@ export class TeXDependencyResolver {
           }
 
           if (candidate.name === "pgfplots" && !hasPgfplotsCompat(preamble)) {
-            // Keep the compatibility setting local to blocks that use PGFPlots.
             preamble = appendLine(preamble, "\\pgfplotsset{compat=1.18}");
             changed = true;
           }
@@ -70,7 +69,15 @@ export class TeXDependencyResolver {
     return { preamble, added, attempts };
   }
 
+  /**
+   * A compiler retry is useful only when TeX reports a missing dependency.
+   * Syntax, grouping, undefined-control-sequence and other compilation errors
+   * must be surfaced immediately instead of causing repeated TeX processes.
+   */
   async resolveFromLog(source: string, preamble: string, log: string): Promise<DependencyResolution> {
+    if (!hasMissingDependencyDiagnostic(log)) {
+      return { preamble, added: [], attempts: 0 };
+    }
     return this.resolve(preamble, source, preamble, log);
   }
 
@@ -157,6 +164,13 @@ function sourceHints(source: string): TeXDependency[] {
   if (/\\begin\{circuitikz\}/u.test(source)) result.push(ENVIRONMENT_PACKAGES.circuitikz);
   if (/\\begin\{forest\}|\\forestset\b/u.test(source)) result.push(ENVIRONMENT_PACKAGES.forest);
   return result;
+}
+
+function hasMissingDependencyDiagnostic(log: string): boolean {
+  return /(?:LaTeX|Package|! LaTeX|! Package).*?(?:File .*? not found|file .*? not found)/isu.test(log)
+    || /(?:File|file) [`'][^`']+\.(?:sty|cls|def|fd|code\.tex)[`']\s+not found/iu.test(log)
+    || /(?:tikzlibrary[^\s`']+\.code\.tex).*?not found/iu.test(log)
+    || /I can't find file/iu.test(log);
 }
 
 function appendLine(preamble: string, line: string): string { return `${preamble.trimEnd()}\n${line}\n`; }
