@@ -10,7 +10,7 @@ import { ConcurrencyLimiter } from "./concurrency";
 import { probeAllExecutables, TeXExecutableName, texLiveExecutableCandidates } from "./executable-detector";
 
 const execFileAsync = promisify(execFile);
-const PIPELINE_VERSION = "7";
+const PIPELINE_VERSION = "8-xdv-no-gs-pdf";
 const MAX_OUTPUT = 4 * 1024 * 1024;
 
 export class RenderError extends Error {
@@ -69,14 +69,18 @@ export class RenderService {
     const cache = this.cacheRoot();
     const cached = path.join(cache, `${hash}.svg`);
     if (await this.exists(cached)) return { hash, svg: await fs.readFile(cached, "utf8"), engine: plan.engine, fromCache: true, source, kind };
+
     const work = path.join(cache, `work-${hash}-${Math.random().toString(36).slice(2, 10)}`);
     await fs.mkdir(cache, { recursive: true });
     await fs.mkdir(work, { recursive: true });
     try {
       await fs.writeFile(path.join(work, "main.tex"), buildDocument(source, settings), "utf8");
-      await this.run(plan.executable, compilerArgs("main.tex", work), work, settings.compileTimeout);
-      const input = plan.outputType === "dvi" ? path.join(work, "main.dvi") : path.join(work, "main.pdf");
+      await this.run(plan.executable, compilerArgs("main.tex", work, plan.outputType), work, settings.compileTimeout);
+
+      const extension = plan.outputType === "pdf" ? "pdf" : plan.outputType === "xdv" ? "xdv" : "dvi";
+      const input = path.join(work, `main.${extension}`);
       if (!await this.exists(input)) throw new RenderError(`TeX compiler completed without producing ${path.basename(input)}.`);
+
       const svg = await this.convertToSvg(input, plan.outputType, work, settings);
       await fs.writeFile(cached, svg, "utf8");
       return { hash, svg, engine: plan.engine, fromCache: false, source, kind };
@@ -89,14 +93,25 @@ export class RenderService {
 
   private async convertToSvg(input: string, outputType: EnginePlan["outputType"], work: string, settings: TikzSettings): Promise<string> {
     const output = path.join(work, "main.svg");
-    const args = outputType === "pdf" ? ["--pdf", input, "-n", "-o", output] : [input, "-n", "-o", output];
-    await this.run(settings.dvisvgmPath, args, work, settings.compileTimeout);
-    if (!await this.exists(output)) throw new RenderError("dvisvgm completed without producing an SVG file.");
+
+    if (outputType === "pdf") {
+      // dvisvgm's PDF mode depends on Ghostscript <10.01 or its mutool-based
+      // handler. Calling mutool directly is deterministic and avoids the
+      // Ghostscript 10.x compatibility trap entirely when MuPDF is installed.
+      const mutool = settings.mutoolPath.trim() || "mutool";
+      await this.run(mutool, ["draw", "-q", "-o", output, input, "1"], work, settings.compileTimeout);
+    } else {
+      // DVI and XeTeX XDV are natively supported by dvisvgm and do not invoke
+      // its PDF handler, so Ghostscript is not involved in this path.
+      await this.run(settings.dvisvgmPath, ["-n", input, "-o", output], work, settings.compileTimeout);
+    }
+
+    if (!await this.exists(output)) throw new RenderError("The vector converter completed without producing an SVG file.");
     return sanitizeSvg(await fs.readFile(output, "utf8"));
   }
 
   private hash(source: string, kind: BlockKind, plan: EnginePlan, settings: TikzSettings): string {
-    return createHash("sha256").update(JSON.stringify({ source, kind, engine: plan.engine, executable: plan.executable, outputType: plan.outputType, preamble: settings.preamble, font: settings.persianFont, dvisvgm: settings.dvisvgmPath, pipeline: PIPELINE_VERSION })).digest("hex");
+    return createHash("sha256").update(JSON.stringify({ source, kind, engine: plan.engine, executable: plan.executable, outputType: plan.outputType, preamble: settings.preamble, font: settings.persianFont, dvisvgm: settings.dvisvgmPath, mutool: settings.mutoolPath, pipeline: PIPELINE_VERSION })).digest("hex");
   }
 
   private cacheRoot(): string {
@@ -106,8 +121,9 @@ export class RenderService {
   }
 
   private async run(executable: string, args: string[], cwd: string, timeout: number): Promise<void> {
-    try { await execFileAsync(executable, args, { cwd, timeout, windowsHide: true, maxBuffer: MAX_OUTPUT }); }
-    catch (error) {
+    try {
+      await execFileAsync(executable, args, { cwd, timeout, windowsHide: true, maxBuffer: MAX_OUTPUT });
+    } catch (error) {
       const x = error as NodeJS.ErrnoException & { killed?: boolean; stdout?: string; stderr?: string };
       if (x.code === "ENOENT") throw new RenderError(`Executable not found: ${executable}`, x.message);
       if (x.code === "ETIMEDOUT" || x.killed) throw new RenderError(`Process timed out after ${timeout} ms: ${executable}`, x.stderr ?? x.message);
@@ -132,9 +148,11 @@ export function selectEngine(source: string, settings: TikzSettings): EnginePlan
   else if (/\\usepackage\s*\{\s*(?:xepersian|fontspec)\s*\}|[\u0600-\u06ff]/u.test(text)) engine = "xelatex";
   else if (/graphdrawing/iu.test(text) || /\\usetikzlibrary\s*\{[^}]*graphdrawing[^}]*\}/isu.test(text)) engine = "lualatex";
   else if (/\\(?:special|dvips)/u.test(source)) engine = "latex";
-  else engine = "pdflatex";
+  else engine = "latex";
+
   const executable = ({ latex: settings.latexPath, pdflatex: settings.pdflatexPath, xelatex: settings.xelatexPath, lualatex: settings.lualatexPath, dvilualatex: settings.dvilualatexPath } as Record<Exclude<Engine, "auto">, string>)[engine];
-  return { engine, executable, outputType: engine === "latex" || engine === "dvilualatex" ? "dvi" : "pdf" };
+  const outputType: EnginePlan["outputType"] = engine === "latex" || engine === "dvilualatex" ? "dvi" : engine === "xelatex" ? "xdv" : "pdf";
+  return { engine, executable, outputType };
 }
 
 export function buildDocument(source: string, settings: TikzSettings): string {
@@ -149,9 +167,15 @@ export function buildDocument(source: string, settings: TikzSettings): string {
   return `\\documentclass{${needsXe ? "article" : "standalone"}}\n${settings.preamble}\n${language}\\begin{document}\n${wrapper}\n\\end{document}\n`;
 }
 
-export function compilerArgs(tex: string, work: string): string[] {
-  return ["-interaction=nonstopmode", "-halt-on-error", "-file-line-error", "-no-shell-escape", "-output-directory", work, tex];
+export function compilerArgs(tex: string, work: string, outputType: EnginePlan["outputType"] = "pdf"): string[] {
+  const common = ["-interaction=nonstopmode", "-halt-on-error", "-file-line-error", "-no-shell-escape", "-output-directory", work];
+  return outputType === "xdv" ? [...common, "-no-pdf", tex] : [...common, tex];
 }
 
 function escapeTex(value: string): string { return value.replace(/[{}%\\]/g, "\\$&"); }
-function sanitizeSvg(svg: string): string { return svg.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "").replace(/<foreignObject\b[^>]*>[\s\S]*?<\/foreignObject>/gi, ""); }
+function sanitizeSvg(svg: string): string {
+  return svg
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "")
+    .replace(/<foreignObject\b[^>]*>[\s\S]*?<\/foreignObject>/gi, "")
+    .replace(/\son[a-z]+\s*=\s*(?:"[^"]*"|'[^']*')/gi, "");
+}
