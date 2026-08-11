@@ -1,5 +1,4 @@
 const PACKAGE_BY_PATTERN: Array<[RegExp, string]> = [
-  // Mathematics and typography.
   [/\\begin\{(?:align|align\*|alignat|alignat\*|gather|gather\*|multline|multline\*|flalign|flalign\*)\}/u, "amsmath"],
   [/\\(?:dfrac|tfrac|binom|dbinom|tbinom|text|operatorname\*?|overset|underset|DeclareMathOperator)\b/u, "amsmath"],
   [/\\mathbb\b/u, "amssymb"],
@@ -8,7 +7,8 @@ const PACKAGE_BY_PATTERN: Array<[RegExp, string]> = [
   [/\\qty\b|\\DeclarePairedDelimiter|\\coloneqq\b/u, "mathtools"],
   [/\\SI\b|\\num\b|\\ang\b|\\qtyrange\b/u, "siunitx"],
   [/\\cancel\b|\\bcancel\b|\\xcancel\b/u, "cancel"],
-  [/\\ce\{|\\pu\{|\\chemfig\b/u, "chemformula"],
+  [/\\ce\{|\\pu\{/u, "chemformula"],
+  [/\\chemfig\b|\\setchemfig\b/u, "chemfig"],
   [/\\includegraphics\b/u, "graphicx"],
   [/\\toprule\b|\\midrule\b|\\bottomrule\b|\\cmidrule\b/u, "booktabs"],
   [/\\multirow\b/u, "multirow"],
@@ -16,11 +16,9 @@ const PACKAGE_BY_PATTERN: Array<[RegExp, string]> = [
   [/\\begin\{longtable\}/u, "longtable"],
   [/\\setlist\b/u, "enumitem"],
   [/\\url\b|\\href\b/u, "hyperref"],
-  [/\\verb\b|\\lstinline\b|\\begin\{lstlisting\}/u, "listings"],
+  [/\\lstinline\b|\\begin\{lstlisting\}/u, "listings"],
   [/\\begin\{minted\}/u, "minted"],
   [/\\rowcolor\b|\\cellcolor\b|\\definecolor\b/u, "xcolor"],
-
-  // TikZ ecosystem packages.
   [/\\begin\{tikzcd\}/u, "tikz-cd"],
   [/\\smartdiagram\b/u, "smartdiagram"],
   [/\\pie\b|\\wheel\b/u, "pgf-pie"],
@@ -29,10 +27,6 @@ const PACKAGE_BY_PATTERN: Array<[RegExp, string]> = [
   [/\\begin\{forest\}|\\forestset\b/u, "forest"],
   [/\\begin\{venndiagram\}|\\begin\{Venn\}/u, "venndiagram"],
   [/\\begin\{neuralnetwork\}|\\nodeconn\b|\\linklayers\b/u, "neuralnetwork"],
-  [/\\begin\{pgfonlayer\}/u, "pgf"] ,
-
-  // pgfplots environments and commands. pgfplots is deliberately detected
-  // from the source instead of being globally loaded for every TikZ block.
   [/\\begin\{(?:axis|semilogxaxis|semilogyaxis|loglogaxis|polaraxis|smithchart)\}/u, "pgfplots"],
   [/\\addplot3?\b|\\addlegendentry\b|\\pgfplotsinvokeforeach\b/u, "pgfplots"],
 ];
@@ -68,9 +62,8 @@ const LIBRARY_BY_PATTERN: Array<[RegExp, string]> = [
   [/\b(?:child\s*\{|grow(?:'|=|\s+(?:right|left|up|down)))\b/isu, "trees"],
   [/\b(?:angle\s*=|angle radius|angle eccentricity|right angle)\b/u, "angles"],
   [/\b(?:xyz cylindrical cs:|canvas is xy plane at z|canvas cs:|xyz spherical cs:)\b/u, "3d"],
-  [/\b(?:intersections|name path|name path global)\b/u, "intersections"],
+  [/\b(?:name path|name path global)\b/u, "intersections"],
   [/\b(?:external|external path|graph drawing|graphdrawing)\b/iu, "graphdrawing"],
-  [/\b(?:positioning plus|node distance)\b/u, "positioning"],
 ];
 
 export function augmentPreamble(preamble: string, source: string): string {
@@ -86,9 +79,6 @@ export function augmentPreamble(preamble: string, source: string): string {
     if (pattern.test(source) && !hasTikzLibrary(combined, library)) libraries.add(library);
   }
 
-  // pgfplots 1.18 is the feature set shipped by the user's TeX Live 2025
-  // installation. Setting compat explicitly avoids legacy compatibility mode
-  // and makes 2D/3D axis label placement deterministic.
   if (packages.has("pgfplots") || hasUsepackage(combined, "pgfplots")) {
     if (!/\\pgfplotsset\s*\{[^}]*\bcompat\s*=\s*1\.18\b[^}]*\}/u.test(combined)) {
       packages.add("pgfplots");
