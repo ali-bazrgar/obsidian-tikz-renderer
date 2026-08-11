@@ -19,12 +19,10 @@ export class TikzMarkdownProcessor {
       const result = await service.render(source, kind);
       if (!el.isConnected) return;
       result.assetPath = await exportService.saveSvg(result.svg, result.hash, ctx.sourcePath, false);
+      await ensureSourceAssetLink(app, ctx, result.assetPath);
       const view = new TikzRendererView(app, exportService, host, result, source, ctx.sourcePath, service, kind, history, historyKey, async (nextSource) => {
         await replaceSource(app, ctx, el, kind, nextSource);
       }, getSettings, saveSettings);
-      // Obsidian will automatically unload this renderer when its markdown
-      // container is replaced/removed. This is the key lifecycle fix that
-      // prevents controls from leaking into other notes or the top-left.
       ctx.addChild(view);
       view.render();
     } catch (error) {
@@ -37,6 +35,23 @@ export class TikzMarkdownProcessor {
   }
 }
 
+/** Add a real Obsidian wikilink directly below the TikZ fence. */
+async function ensureSourceAssetLink(app: App, ctx: MarkdownPostProcessorContext, assetPath: string): Promise<void> {
+  const section = ctx.getSectionInfo(ctx.docId ? document.body : document.body);
+  const file = app.vault.getFileByPath(ctx.sourcePath);
+  if (!(file instanceof TFile) || !assetPath) return;
+  const block = ctx.getSectionInfo(document.querySelector(".tikz-renderer-block") as HTMLElement);
+  if (!block) return;
+  await app.vault.process(file, (data) => {
+    const start = findNthLineOffset(data, block.lineEnd);
+    const before = data.slice(Math.max(0, start - 300), start);
+    const wikilink = `[[${assetPath}]]`;
+    if (before.includes(wikilink)) return data;
+    const eol = data.includes("\r\n") ? "\r\n" : "\n";
+    return `${data.slice(0, start)}${eol}${wikilink}${eol}${data.slice(start)}`;
+  });
+}
+
 function makeHistoryKey(ctx: MarkdownPostProcessorContext, section: MarkdownSectionInformation | null, kind: BlockKind, source: string): string {
   const location = section ? `${section.lineStart}-${section.lineEnd}` : createHash("sha256").update(source).digest("hex").slice(0, 16);
   return `${ctx.sourcePath}:${location}:${kind}`;
@@ -47,29 +62,24 @@ async function replaceSource(app: App, ctx: MarkdownPostProcessorContext, el: HT
   if (!section) throw new Error("This TikZ block cannot be edited from the current preview context. Open the note normally and try again.");
   const file = app.vault.getFileByPath(ctx.sourcePath);
   if (!(file instanceof TFile)) throw new Error("The source note is no longer available.");
-
   const originalLines = section.text.split(/\r?\n/u);
   const openIndex = originalLines.findIndex((line) => line.trimEnd() === `\`\`\`${kind}`);
   if (openIndex < 0) throw new Error("Could not locate the TikZ code fence in the source section.");
-
   let closeIndex = -1;
   for (let index = openIndex + 1; index < originalLines.length; index += 1) {
     if (originalLines[index].trim() === "```") { closeIndex = index; break; }
   }
   if (closeIndex < 0) throw new Error("Could not locate the closing TikZ fence.");
-
   const normalizedSource = nextSource.replace(/\r?\n$/u, "");
   const replacementLines = [...originalLines.slice(0, openIndex + 1), ...normalizedSource.split(/\r?\n/u), "```", ...originalLines.slice(closeIndex + 1)];
   const replacement = replacementLines.join("\n");
-
   await app.vault.process(file, (data) => {
     const sectionStart = findNthLineOffset(data, section.lineStart);
     const sectionEnd = findNthLineOffset(data, section.lineEnd);
     const currentSection = data.slice(sectionStart, sectionEnd);
     if (currentSection.replace(/\r\n/gu, "\n") !== section.text.replace(/\r\n/gu, "\n")) throw new Error("The note changed before the edit could be applied. Please render again and retry.");
     const eol = data.includes("\r\n") ? "\r\n" : "\n";
-    const replacementWithEol = replacement.replace(/\n/gu, eol);
-    return `${data.slice(0, sectionStart)}${replacementWithEol}${data.slice(sectionEnd)}`;
+    return `${data.slice(0, sectionStart)}${replacement.replace(/\n/gu, eol)}${data.slice(sectionEnd)}`;
   });
 }
 
