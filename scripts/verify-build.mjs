@@ -21,7 +21,7 @@ if (!renderer.includes("panel.hidden = true")) throw new Error("Popup is not hid
 if (!renderer.includes('menu.addEventListener("pointerdown", togglePanel)')) throw new Error("Popup toggle must use a reliable pointer event.");
 if (!renderer.includes('menu.addEventListener("keydown"')) throw new Error("Popup toggle must remain keyboard accessible.");
 if (!renderer.includes('win?.addEventListener("wheel", wheel, { passive: false, capture: true })')) throw new Error("Wheel interaction must be registered at window capture level.");
-if (!renderer.includes("const resizeViewport = !reading && (e.ctrlKey || e.metaKey);")) throw new Error("Ctrl+wheel must be dedicated to Reading-safe viewport-height resizing in Writing mode.");
+if (!renderer.includes("const resizeViewport = !reading && (e.ctrlKey || e.metaKey);")) throw new Error("Ctrl+wheel must be dedicated to viewport-height resizing in Writing mode.");
 if (!renderer.includes("const resetReadView = (): void =>")) throw new Error("Reading view must have a transient reset-to-Edit state handler.");
 if (!renderer.includes('viewport.addEventListener("pointerleave", resetReadView)')) throw new Error("Reading view must restore the Edit position when the pointer leaves the figure.");
 if (!renderer.includes("this.result.assetPath = await this.exportService.saveSvg")) throw new Error("Rendered TikZ results must persist SVG assets.");
@@ -49,8 +49,8 @@ if (compactCss.includes("tikz-renderer-paper")) throw new Error("The obsolete vi
 if (!compactCss.includes('.tikz-renderer-controls{position:absolute') || !compactCss.includes('left:5px')) throw new Error("TikZ controls must remain attached to the renderer without changing the figure layer.");
 if (!compactCss.includes('.tikz-renderer-shell{') || !compactCss.includes('background:transparent')) throw new Error("The shell must be visually transparent so it cannot form a second figure.");
 if (!compactCss.includes('.tikz-renderer-viewport{') || !compactCss.includes('background:var(--tikz-figure-bg)')) throw new Error("Theme background must belong to the single visual viewport.");
-if (compactCss.includes('overflow:hidden;') && compactCss.includes('.tikz-renderer-viewport{')) throw new Error("The TikZ viewport must not clip oversized or panned SVG content.");
-if (compactCss.includes('contain:paint')) throw new Error("The TikZ viewport must not use paint containment because it clips panned content.");
+if (/\.tikz-renderer-viewport\{[^}]*overflow:hidden/u.test(css)) throw new Error("The TikZ viewport must not clip oversized or panned SVG content.");
+if (/\.tikz-renderer-viewport\{[^}]*contain:paint/u.test(css)) throw new Error("The TikZ viewport must not use paint containment because it clips panned content.");
 if (!/\.tikz-renderer-shell\[data-mode="reading"\] \.tikz-renderer-viewport\{[^}]*pointer-events:auto!important[^}]*touch-action:none!important/u.test(css)) throw new Error("Reading mode must expose pointer interaction for transient pan and zoom.");
 if (!css.includes('.tikz-renderer-shell:not([data-theme="custom"]) .tikz-renderer-svg')) throw new Error("Custom theme must preserve the SVG's original black colors.");
 if (!css.includes('.markdown-preview-view a.tikz-generated-asset-link') || !css.includes('display:none!important')) throw new Error("Generated SVG wikilinks must be hidden only in Reading view.");
