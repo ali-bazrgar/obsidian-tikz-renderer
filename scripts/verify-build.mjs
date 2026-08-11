@@ -14,37 +14,35 @@ const codeMirrorImports = (output.imports ?? []).filter((item) =>
   item.path === "@codemirror/state" || item.path === "@codemirror/view" ||
   item.path.startsWith("@codemirror/state/") || item.path.startsWith("@codemirror/view/"),
 );
-for (const item of codeMirrorImports) {
-  if (item.external) throw new Error(`CodeMirror import was incorrectly externalized: ${item.path}`);
+if (codeMirrorImports.length > 0) {
+  throw new Error(`The production plugin bundle must not load a private CodeMirror runtime: ${codeMirrorImports.map((item) => item.path).join(", ")}`);
+}
+
+const main = await readFile("main.js", "utf8");
+if (main.includes("@codemirror/state") || main.includes("@codemirror/view")) {
+  throw new Error("CodeMirror runtime references were found in main.js.");
+}
+
+const renderer = await readFile("src/ui/renderer-view.ts", "utf8");
+if (!renderer.includes('parseFromString(this.result.svg, "image/svg+xml")')) {
+  throw new Error("Reading-mode renderer is not using inline SVG DOM rendering.");
+}
+if (renderer.includes("svgDataUri") || renderer.includes('src: svgDataUri')) {
+  throw new Error("Reading-mode renderer must not use SVG data-URI images.");
+}
+
+const livePreview = await readFile("src/editor/live-preview.ts", "utf8");
+if (livePreview.includes("svgDataUri") || livePreview.includes('createEl(\"img\"')) {
+  throw new Error("Live Preview must not rasterize TikZ SVG through an image data URI.");
+}
+
+const manifest = JSON.parse(await readFile("manifest.json", "utf8"));
+const packageJson = JSON.parse(await readFile("package.json", "utf8"));
+if (manifest.version !== packageJson.version) {
+  throw new Error(`Version mismatch: manifest ${manifest.version}, package.json ${packageJson.version}.`);
 }
 
 const inputs = Object.keys(meta.inputs ?? {});
-for (const packageName of ["@codemirror/state", "@codemirror/view"]) {
-  const inputMatches = inputs.filter((path) => path.includes(`node_modules/${packageName}/`));
-  if (inputMatches.length === 0) throw new Error(`CodeMirror package is not present in the bundle inputs: ${packageName}`);
-
-  const roots = new Set(inputMatches.map((path) => {
-    const marker = `node_modules/${packageName}/`;
-    return path.slice(0, path.indexOf(marker) + marker.length);
-  }));
-  if (roots.size > 1) throw new Error(`Multiple bundled ${packageName} roots detected: ${[...roots].join(", ")}`);
-}
-
-const lock = JSON.parse(await readFile("package-lock.json", "utf8"));
-const packages = lock.packages ?? {};
-const expected = {
-  "@codemirror/state": "6.5.2",
-  "@codemirror/view": "6.36.5",
-};
-for (const [packageName, expectedVersion] of Object.entries(expected)) {
-  const prefix = `node_modules/${packageName}`;
-  const instances = Object.entries(packages).filter(([key]) => key === prefix || key.endsWith(`/node_modules/${packageName}`));
-  const versions = [...new Set(instances.map(([, value]) => value?.version).filter(Boolean))];
-  if (instances.length === 0) throw new Error(`Locked dependency missing: ${packageName}`);
-  if (versions.length > 1) throw new Error(`Multiple installed ${packageName} versions detected: ${versions.join(", ")}`);
-  if (versions[0] !== expectedVersion) throw new Error(`Unexpected ${packageName} version: ${versions[0]}; expected ${expectedVersion}.`);
-}
-
 console.log("Build artifacts verified.");
 console.log(`esbuild bundled inputs: ${inputs.length}`);
-console.log("CodeMirror state/view are bundled, single-root, and pinned to one exact locked version each.");
+console.log("Production bundle contains no private CodeMirror runtime and renderer uses inline SVG.");
