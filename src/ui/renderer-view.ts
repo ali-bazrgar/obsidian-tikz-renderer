@@ -79,7 +79,27 @@ export class TikzRendererView extends MarkdownRenderChild {
     viewport.addEventListener("pointerup", stopDragging); viewport.addEventListener("pointercancel", stopDragging); viewport.addEventListener("lostpointercapture", stopDragging);
     const resetReadView = (): void => { if (!isReadingMode() || !shell.isConnected) return; dragging = false; const shared = TikzRendererView.viewStates.get(stateKey) ?? initialEditState; applyLocalViewState(shared); };
     viewport.addEventListener("pointerleave", resetReadView);
-    const wheel = (e: WheelEvent): void => { const reading = isReadingMode(); if ((!reading && (!e.ctrlKey && !e.metaKey)) || !shell.isConnected) return; const target = e.target; if (!(target instanceof Node) || !viewport.contains(target)) return; if (target instanceof HTMLInputElement || target instanceof HTMLButtonElement) return; if (!ensureIntrinsicSize()) return; e.preventDefault(); e.stopPropagation(); const old = zoom; const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12; const next = clampZoom(old * factor); const r = viewport.getBoundingClientRect(); const x = e.clientX - r.left; const y = e.clientY - r.top; const ratio = next / old; if (next !== old) { panX = x - (x - panX) * ratio; panY = y - (y - panY) * ratio; zoom = next; } if (!reading) { viewportHeight = clampViewportHeight(viewportHeight * factor); persistEditViewState(); } applyZoom(); };
+    const wheel = (e: WheelEvent): void => { const reading = isReadingMode(); if (!shell.isConnected) return; const target = e.target; if (!(target instanceof Node) || !viewport.contains(target)) return; if (target instanceof HTMLInputElement || target instanceof HTMLButtonElement) return; if (!ensureIntrinsicSize()) return;
+      const resizeViewport = !reading && (e.ctrlKey || e.metaKey);
+      e.preventDefault(); e.stopPropagation();
+      if (resizeViewport) {
+        const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+        viewportHeight = clampViewportHeight(viewportHeight * factor);
+        persistEditViewState();
+        applyZoom();
+        return;
+      }
+      const old = zoom;
+      const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+      const next = clampZoom(old * factor);
+      const r = viewport.getBoundingClientRect();
+      const x = e.clientX - r.left;
+      const y = e.clientY - r.top;
+      const ratio = next / old;
+      if (next !== old) { panX = x - (x - panX) * ratio; panY = y - (y - panY) * ratio; zoom = next; }
+      if (!reading) persistEditViewState();
+      applyZoom();
+    };
     win?.addEventListener("wheel", wheel, { passive: false, capture: true });
     const observer = new MutationObserver(() => { const changed = updateMode(); if (changed) applyZoom(); else { applyTheme(); positionPanel(); } }); observer.observe(doc.body, { attributes: true, attributeFilter: ["class"] });
     const resizeObserver = new ResizeObserver(() => { ensureViewportSize(); positionPanel(); }); resizeObserver.observe(viewport);
@@ -95,7 +115,7 @@ export class TikzRendererView extends MarkdownRenderChild {
 
 function detectTheme(doc: Document): string { if (doc.body.classList.contains("theme-dark")) return "dark"; if (doc.body.classList.contains("theme-light")) return "light"; return "obsidian"; }
 function clampZoom(value: number): number { return Math.min(5, Math.max(.25, value)); }
-function clampViewportHeight(value: number): number { return Math.min(1600, Math.max(80, value)); }
+function clampViewportHeight(value: number): number { return Math.min(10000, Math.max(80, value)); }
 function viewStorageKey(key: string): string { return `obsidian-tikz-renderer:view:${key}`; }
 function themeStorageKey(key: string): string { return `obsidian-tikz-renderer:theme:${key}`; }
 function loadViewState(key: string): TikzViewState | undefined { try { const raw = window.localStorage.getItem(viewStorageKey(key)); if (!raw) return undefined; const p = JSON.parse(raw) as Partial<TikzViewState>; if (!Number.isFinite(p.zoom) || !Number.isFinite(p.panX) || !Number.isFinite(p.panY)) return undefined; return { zoom: clampZoom(Number(p.zoom)), panX: Number(p.panX), panY: Number(p.panY), viewportHeight: Number.isFinite(p.viewportHeight) ? clampViewportHeight(Number(p.viewportHeight)) : 0 }; } catch { return undefined; } }
