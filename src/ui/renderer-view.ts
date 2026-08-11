@@ -1,0 +1,13 @@
+import { setIcon, Notice } from "obsidian";
+import { RenderResult, RenderService } from "../core/render-service";
+export class TikzRendererView {
+  constructor(private readonly host:HTMLElement,private readonly result:RenderResult,private readonly source:string,private readonly service:RenderService){}
+  render():void{
+    this.host.empty();const root=this.host.createDiv({cls:"tikz-renderer"}),toolbar=root.createDiv({cls:"tikz-renderer-toolbar"});toolbar.createSpan({text:"TikZ Renderer",cls:"tikz-renderer-title"});const menu=toolbar.createEl("button",{cls:"tikz-renderer-menu",attr:{"aria-label":"TikZ controls"}});setIcon(menu,"more-vertical");
+    const body=root.createDiv({cls:"tikz-renderer-canvas"}),viewport=body.createDiv({cls:"tikz-renderer-viewport"}),img=viewport.createEl("img",{cls:"tikz-renderer-svg",attr:{src:`data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(this.result.svg)))}`,alt:"TikZ diagram"}});let zoom=1,x=0,y=0;const apply=()=>{img.style.transform=`translate(${x}px,${y}px) scale(${zoom})`;};
+    const panel=root.createDiv({cls:"tikz-renderer-panel"});panel.style.display="none";menu.addEventListener("click",()=>{panel.style.display=panel.style.display==="none"?"grid":"none";});const row=(label:string,action:()=>void)=>{const b=panel.createEl("button",{text:label});b.addEventListener("click",action);};
+    row("−",()=>{zoom=Math.max(.25,zoom-.25);apply();});row("Reset",()=>{zoom=1;x=0;y=0;apply();});row("+",()=>{zoom=Math.min(5,zoom+.25);apply();});row("Fit",()=>{zoom=Math.min(1,viewport.clientWidth/Math.max(1,img.naturalWidth));x=0;y=0;apply();});row("Copy source",async()=>{await navigator.clipboard.writeText(this.source);new Notice("TikZ source copied.");});row("Copy embed",async()=>{await navigator.clipboard.writeText(`\\`\\`\\`tikz\n${this.source}\n\\`\\`\\``);new Notice("TikZ embed copied.");});row("Export SVG",()=>{const blob=new Blob([this.result.svg],{type:"image/svg+xml"});const url=URL.createObjectURL(blob),a=document.createElement("a");a.href=url;a.download=`${this.result.hash}.svg`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);});row("Re-render",()=>void this.rerender());apply();
+    let dragging=false,lastX=0,lastY=0;viewport.addEventListener("pointerdown",e=>{dragging=true;lastX=e.clientX;lastY=e.clientY;viewport.setPointerCapture(e.pointerId);});viewport.addEventListener("pointermove",e=>{if(!dragging)return;x+=e.clientX-lastX;y+=e.clientY-lastY;lastX=e.clientX;lastY=e.clientY;apply();});viewport.addEventListener("pointerup",()=>{dragging=false;});
+  }
+  private async rerender():Promise<void>{try{const next=await this.service.render(this.source,"tikz");this.result.svg=next.svg;this.render();}catch(e){new Notice(e instanceof Error?e.message:String(e),8000);}}
+}
