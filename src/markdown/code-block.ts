@@ -23,14 +23,11 @@ export class TikzMarkdownProcessor {
       if (!el.isConnected) return;
       result.assetPath = await exportService.saveSvg(result.svg, result.hash, ctx.sourcePath, false);
       if (section) await ensureSourceAssetLinks(app, ctx.sourcePath, section, result.assetPath, historyKey);
-      const view = new TikzRendererView(app, exportService, host, result, source, ctx.sourcePath, service, kind, history, historyKey, async (nextSource) => {
-        await replaceSource(app, ctx, el, kind, nextSource);
-      }, getSettings, saveSettings);
+      const edit = async (): Promise<void> => replaceSource(app, ctx, el, kind, source);
+      const view = new TikzRendererView(app, exportService, host, result, source, ctx.sourcePath, service, kind, history, historyKey, async nextSource => replaceSource(app, ctx, el, kind, nextSource), getSettings, saveSettings);
       ctx.addChild(view);
       view.render();
-      scheduleGeneratedLinks(el, result.assetPath, historyKey, async () => {
-        await replaceSource(app, ctx, el, kind, source);
-      });
+      scheduleGeneratedLinks(el, result.assetPath, historyKey, edit);
     } catch (error) {
       if (!el.isConnected) return;
       host.empty();
@@ -46,26 +43,35 @@ function scheduleGeneratedLinks(el: HTMLElement, assetPath: string, historyKey: 
   const mark = (): void => { if (el.isConnected) markGeneratedLinks(el, assetPath, historyKey, edit); };
   window.setTimeout(mark, 0);
   window.requestAnimationFrame(mark);
+  window.setTimeout(mark, 50);
+  window.setTimeout(mark, 250);
+  window.setTimeout(mark, 1000);
 }
 
 function markGeneratedLinks(el: HTMLElement, assetPath: string, historyKey: string, edit: () => Promise<void>): void {
   const normalizedPath = assetPath.replace(/\\/gu, "/");
-  const root = el.parentElement ?? el;
-  const links = Array.from(root.querySelectorAll<HTMLAnchorElement>("a.internal-link, a[href]"));
-  const generated = links.find((link) => {
+  const roots: Element[] = [document.body];
+  if (el.parentElement) roots.push(el.parentElement);
+  const section = el.closest(".markdown-preview-section, .markdown-source-view, .cm-content");
+  if (section) roots.push(section);
+  const links = Array.from(new Set(roots.flatMap(root => Array.from(root.querySelectorAll<HTMLAnchorElement>("a.internal-link, a[href]")))));
+  for (const link of links) {
     const href = decodeURIComponent(link.getAttribute("href") ?? "").replace(/\\/gu, "/");
-    return href === normalizedPath || href.endsWith(`/${normalizedPath}`);
-  });
-  if (generated) generated.classList.add(GENERATED_ASSET_CLASS);
-  const candidate = links.find((link) => link.getAttribute("href") === `#tikz-edit:${historyKey}`);
-  if (!candidate || candidate.classList.contains(GENERATED_EDIT_CLASS)) return;
-  candidate.classList.add(GENERATED_EDIT_CLASS);
-  candidate.setAttribute("data-tikz-edit", historyKey);
-  candidate.addEventListener("click", async (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-    try { await edit(); } catch (error) { new Notice(error instanceof Error ? error.message : String(error), 8000); }
-  });
+    const text = link.textContent?.trim().replace(/\\/gu, "/") ?? "";
+    if (href === normalizedPath || href.endsWith(`/${normalizedPath}`) || text === normalizedPath || text.endsWith(`/${normalizedPath}`)) link.classList.add(GENERATED_ASSET_CLASS);
+    if (href === `#tikz-edit:${historyKey}` || text === "✎ Edit TikZ") {
+      link.classList.add(GENERATED_EDIT_CLASS);
+      link.dataset.tikzEdit = historyKey;
+      if (link.dataset.tikzBound !== "true") {
+        link.dataset.tikzBound = "true";
+        link.addEventListener("click", async event => {
+          event.preventDefault();
+          event.stopPropagation();
+          try { await edit(); } catch (error) { new Notice(error instanceof Error ? error.message : String(error), 8000); }
+        });
+      }
+    }
+  }
 }
 
 async function ensureSourceAssetLinks(app: App, sourcePath: string, section: MarkdownSectionInformation, assetPath: string, historyKey: string): Promise<void> {
@@ -73,40 +79,24 @@ async function ensureSourceAssetLinks(app: App, sourcePath: string, section: Mar
   if (!(file instanceof TFile) || !assetPath) return;
   const wikilink = `[[${assetPath}]]`;
   const editLink = `[✎ Edit TikZ](#tikz-edit:${historyKey})`;
-  await app.vault.process(file, (data) => {
+  await app.vault.process(file, data => {
     const insertionOffset = findNthLineOffset(data, section.lineEnd + 1);
     const eol = data.includes("\r\n") ? "\r\n" : "\n";
     const lines = data.split(/\r?\n/u);
     let insertionLine = lineIndexAtOffset(data, insertionOffset);
-
-    // Remove only the generated-link run belonging immediately after this code block.
-    // This makes repeated Live Preview/PostProcessor passes idempotent and prevents link multiplication.
     while (insertionLine < lines.length) {
       const line = lines[insertionLine].trim();
-      if (line === wikilink || line === editLink) {
-        lines.splice(insertionLine, 1);
-        continue;
-      }
+      if (line === wikilink || line === editLink || line.includes(`](#tikz-edit:${historyKey})`)) { lines.splice(insertionLine, 1); continue; }
       if (line === "") { insertionLine += 1; continue; }
       break;
     }
-
-    const additions = [editLink, wikilink];
-    lines.splice(insertionLine, 0, ...additions);
+    lines.splice(insertionLine, 0, editLink, wikilink);
     return lines.join(eol);
   });
 }
 
-function lineIndexAtOffset(text: string, offset: number): number {
-  let line = 0;
-  for (let index = 0; index < offset && index < text.length; index += 1) if (text[index] === "\n") line += 1;
-  return line;
-}
-
-function makeHistoryKey(ctx: MarkdownPostProcessorContext, section: MarkdownSectionInformation | null, kind: BlockKind, source: string): string {
-  const location = section ? `${section.lineStart}` : createHash("sha256").update(source).digest("hex").slice(0, 16);
-  return `${ctx.sourcePath}:${location}:${kind}`;
-}
+function lineIndexAtOffset(text: string, offset: number): number { let line = 0; for (let index = 0; index < offset && index < text.length; index += 1) if (text[index] === "\n") line += 1; return line; }
+function makeHistoryKey(ctx: MarkdownPostProcessorContext, section: MarkdownSectionInformation | null, kind: BlockKind, source: string): string { const location = section ? `${section.lineStart}` : createHash("sha256").update(source).digest("hex").slice(0, 16); return `${ctx.sourcePath}:${location}:${kind}`; }
 
 async function replaceSource(app: App, ctx: MarkdownPostProcessorContext, el: HTMLElement, kind: BlockKind, nextSource: string): Promise<void> {
   const section = ctx.getSectionInfo(el);
@@ -114,33 +104,22 @@ async function replaceSource(app: App, ctx: MarkdownPostProcessorContext, el: HT
   const file = app.vault.getFileByPath(ctx.sourcePath);
   if (!(file instanceof TFile)) throw new Error("The source note is no longer available.");
   const originalLines = section.text.split(/\r?\n/u);
-  const openIndex = originalLines.findIndex((line) => line.trimEnd() === `\`\`\`${kind}`);
+  const openIndex = originalLines.findIndex(line => line.trimEnd() === `\`\`\`${kind}`);
   if (openIndex < 0) throw new Error("Could not locate the TikZ code fence in the source section.");
   let closeIndex = -1;
-  for (let index = openIndex + 1; index < originalLines.length; index += 1) {
-    if (originalLines[index].trim() === "```") { closeIndex = index; break; }
-  }
+  for (let index = openIndex + 1; index < originalLines.length; index += 1) if (originalLines[index].trim() === "```") { closeIndex = index; break; }
   if (closeIndex < 0) throw new Error("Could not locate the closing TikZ fence.");
   const normalizedSource = nextSource.replace(/\r?\n$/u, "");
-  const replacementLines = [...originalLines.slice(0, openIndex + 1), ...normalizedSource.split(/\r?\n/u), "```", ...originalLines.slice(closeIndex + 1)];
-  const replacement = replacementLines.join("\n");
-  await app.vault.process(file, (data) => {
+  const replacement = [...originalLines.slice(0, openIndex + 1), ...normalizedSource.split(/\r?\n/u), "```", ...originalLines.slice(closeIndex + 1)].join("\n");
+  await app.vault.process(file, data => {
     const sectionStart = findNthLineOffset(data, section.lineStart);
     const sectionEnd = findNthLineOffset(data, section.lineEnd);
-    const currentSection = data.slice(sectionStart, sectionEnd);
-    if (currentSection.replace(/\r\n/gu, "\n") !== section.text.replace(/\r\n/gu, "\n")) throw new Error("The note changed before the edit could be applied. Please render again and retry.");
+    const currentSection = data.slice(sectionStart, sectionEnd).replace(/\r\n/gu, "\n");
+    const expected = section.text.replace(/\r\n/gu, "\n");
+    if (currentSection !== expected && !currentSection.startsWith(expected)) throw new Error("The note changed before the edit could be applied. Please render again and retry.");
     const eol = data.includes("\r\n") ? "\r\n" : "\n";
     return `${data.slice(0, sectionStart)}${replacement.replace(/\n/gu, eol)}${data.slice(sectionEnd)}`;
   });
 }
 
-function findNthLineOffset(text: string, lineNumber: number): number {
-  if (lineNumber <= 0) return 0;
-  let offset = 0;
-  for (let line = 0; line < lineNumber; line += 1) {
-    const next = text.indexOf("\n", offset);
-    if (next < 0) return text.length;
-    offset = next + 1;
-  }
-  return offset;
-}
+function findNthLineOffset(text: string, lineNumber: number): number { if (lineNumber <= 0) return 0; let offset = 0; for (let line = 0; line < lineNumber; line += 1) { const next = text.indexOf("\n", offset); if (next < 0) return text.length; offset = next + 1; } return offset; }
