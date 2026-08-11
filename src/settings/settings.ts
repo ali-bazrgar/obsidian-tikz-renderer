@@ -50,7 +50,7 @@ export const DEFAULT_SETTINGS: TikzSettings = {
   customBackgroundOpacity: 100,
   defaultZoom: 100,
   keepTexSource: false,
-  compileTimeout: 30000,
+  compileTimeout: 120000,
   persianFont: "Vazirmatn",
   preamble: DEFAULT_PREAMBLE,
   historyLimit: 20,
