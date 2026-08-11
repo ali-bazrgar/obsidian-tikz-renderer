@@ -56,9 +56,9 @@ function markGeneratedAssetLinkInReading(el: HTMLElement, assetPath: string): vo
     return href === normalizedPath || href.endsWith(`/${normalizedPath}`);
   });
   if (!generated) return;
+  // Mark only the actual generated wikilink. Never mark its paragraph/div wrapper,
+  // otherwise Reading-view CSS can accidentally hide the TikZ figure itself.
   generated.classList.add(GENERATED_ASSET_CLASS);
-  const wrapper = generated.closest("p, div, li") as HTMLElement | null;
-  if (wrapper && wrapper !== el) wrapper.classList.add(GENERATED_ASSET_CLASS);
 }
 
 async function ensureSourceAssetLink(app: App, sourcePath: string, section: MarkdownSectionInformation, assetPath: string): Promise<void> {
