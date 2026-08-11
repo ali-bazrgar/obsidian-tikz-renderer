@@ -22,15 +22,29 @@ export default class TikzRendererPlugin extends Plugin {
     this.exportService = new ExportService(this.app, () => this.settings.assetFolder);
     this.historyStore = new TikzHistoryStore(this.app, () => this.settings.historyLimit);
 
-    // Reading-mode rendering is deliberately independent of CodeMirror. The
-    // previous editor-extension layer bundled its own @codemirror/state/view
-    // instances and could conflict with Obsidian's internal editor runtime.
-    // TikZ rendering in notes does not require that dependency.
     for (const language of LANGUAGES) {
       this.registerMarkdownCodeBlockProcessor(language, (source, el, ctx) =>
         TikzMarkdownProcessor.process(this.app, this.exportService, this.historyStore, language, source, el, ctx, this.renderService, () => this.settings, async (settings) => this.saveSettings(settings)),
       );
     }
+
+    // The generated [[asset.svg]] is intentionally kept in the Markdown source
+    // so it behaves like a normal Obsidian attachment link in Live Preview and
+    // Source mode. In Reading view only the paragraph immediately following a
+    // TikZ renderer is hidden; unrelated SVG links remain untouched.
+    this.registerMarkdownPostProcessor((el) => {
+      const tikzBlocks = Array.from(el.querySelectorAll<HTMLElement>(".tikz-renderer-block"));
+      for (const block of tikzBlocks) {
+        const next = block.nextElementSibling;
+        if (!(next instanceof HTMLElement)) continue;
+        const links = Array.from(next.querySelectorAll<HTMLAnchorElement>("a.internal-link"));
+        if (!links.length) continue;
+        if (links.some((link) => /\.svg(?:#.*)?$/iu.test(link.getAttribute("href") ?? ""))) {
+          next.classList.add("tikz-generated-asset-link");
+          next.setAttribute("aria-hidden", "true");
+        }
+      }
+    });
 
     this.addCommand({ id: "test-tex-installation", name: "Test TeX installation", callback: async () => {
       const result = await this.renderService.testInstallation();
@@ -87,15 +101,12 @@ class TikzSettingTab extends PluginSettingTab {
     new Setting(container).setName("Detect TeX Live executables").setDesc("Checks every configured executable with --version.").addButton((button) => button.setButtonText("Detect").onClick(async () => this.renderDetectionResults(await this.plugin.detectTeXExecutables())));
     this.detectionContainer = container.createDiv({ cls: "tikz-detection-results" });
     this.renderDetectionResults([]);
-
     const paths: Array<[keyof TikzSettings, string]> = [["latexPath", "latex path"], ["pdflatexPath", "pdflatex path"], ["xelatexPath", "xelatex path"], ["lualatexPath", "lualatex path"], ["dvilualatexPath", "dvilualatex path"], ["dvisvgmPath", "dvisvgm path"], ["mutoolPath", "mutool path"]];
     for (const [key, name] of paths) new Setting(container).setName(name).addText((text) => text.setValue(String(this.plugin.settings[key])).onChange(async (value) => this.plugin.saveSettings({ ...this.plugin.settings, [key]: value.trim() })));
-
     new Setting(container).setName("Asset folder").addText((text) => text.setValue(this.plugin.settings.assetFolder).onChange(async (value) => this.plugin.saveSettings({ ...this.plugin.settings, assetFolder: normalizePath(value.trim()) })));
     new Setting(container).setName("Cache folder").addText((text) => text.setValue(this.plugin.settings.cacheFolder).onChange(async (value) => this.plugin.saveSettings({ ...this.plugin.settings, cacheFolder: normalizePath(value.trim()) })));
     new Setting(container).setName("Compile timeout (ms)").addText((text) => text.setValue(String(this.plugin.settings.compileTimeout)).onChange(async (value) => this.plugin.saveSettings({ ...this.plugin.settings, compileTimeout: Math.max(5000, Math.min(120000, Number(value) || 30000)) })));
     new Setting(container).setName("Default zoom").addSlider((slider) => slider.setLimits(25, 500, 25).setValue(this.plugin.settings.defaultZoom).setDynamicTooltip().onChange(async (value) => this.plugin.saveSettings({ ...this.plugin.settings, defaultZoom: value })));
-
     new Setting(container).setName("Display theme").setDesc("Changes the figure background only; TikZ source and SVG colors are never rewritten.").addDropdown((dropdown) => dropdown.addOptions({ auto: "Auto", obsidian: "Obsidian", light: "Light", paper: "Paper", dark: "Dark", contrast: "Contrast", bw: "Black & white", custom: "Custom" }).setValue(this.plugin.settings.displayTheme).onChange(async (value) => this.plugin.saveSettings({ ...this.plugin.settings, displayTheme: value as TikzSettings["displayTheme"] })));
     new Setting(container).setName("Custom background").addColorPicker((picker) => picker.setValue(this.plugin.settings.customBackgroundColor).onChange(async (value) => this.plugin.saveSettings({ ...this.plugin.settings, customBackgroundColor: value })));
     new Setting(container).setName("Custom background opacity").addSlider((slider) => slider.setLimits(10, 100, 1).setValue(this.plugin.settings.customBackgroundOpacity).setDynamicTooltip().onChange(async (value) => this.plugin.saveSettings({ ...this.plugin.settings, customBackgroundOpacity: value })));
