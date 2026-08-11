@@ -10,7 +10,7 @@ import { ConcurrencyLimiter } from "./concurrency";
 import { probeAllExecutables, TeXExecutableName, texLiveExecutableCandidates } from "./executable-detector";
 
 const execFileAsync = promisify(execFile);
-const PIPELINE_VERSION = "6";
+const PIPELINE_VERSION = "7";
 const MAX_OUTPUT = 4 * 1024 * 1024;
 
 export class RenderError extends Error {
@@ -26,7 +26,7 @@ export class RenderService {
 
   async render(source: string, kind: BlockKind): Promise<RenderResult> {
     const settings = this.getSettings();
-    const plan = this.selectEngine(source, settings);
+    const plan = selectEngine(source, settings);
     const hash = this.hash(source, kind, plan, settings);
     const existing = this.inFlight.get(hash);
     if (existing) return existing;
@@ -70,11 +70,11 @@ export class RenderService {
     const cached = path.join(cache, `${hash}.svg`);
     if (await this.exists(cached)) return { hash, svg: await fs.readFile(cached, "utf8"), engine: plan.engine, fromCache: true, source, kind };
     const work = path.join(cache, `work-${hash}-${Math.random().toString(36).slice(2, 10)}`);
+    await fs.mkdir(cache, { recursive: true });
     await fs.mkdir(work, { recursive: true });
     try {
-      await fs.mkdir(cache, { recursive: true });
-      await fs.writeFile(path.join(work, "main.tex"), this.buildDocument(source, settings), "utf8");
-      await this.run(plan.executable, this.compilerArgs("main.tex", work), work, settings.compileTimeout);
+      await fs.writeFile(path.join(work, "main.tex"), buildDocument(source, settings), "utf8");
+      await this.run(plan.executable, compilerArgs("main.tex", work), work, settings.compileTimeout);
       const input = plan.outputType === "dvi" ? path.join(work, "main.dvi") : path.join(work, "main.pdf");
       if (!await this.exists(input)) throw new RenderError(`TeX compiler completed without producing ${path.basename(input)}.`);
       const svg = await this.convertToSvg(input, plan.outputType, work, settings);
@@ -93,32 +93,6 @@ export class RenderService {
     await this.run(settings.dvisvgmPath, args, work, settings.compileTimeout);
     if (!await this.exists(output)) throw new RenderError("dvisvgm completed without producing an SVG file.");
     return sanitizeSvg(await fs.readFile(output, "utf8"));
-  }
-
-  private buildDocument(source: string, settings: TikzSettings): string {
-    const needsXe = /[\u0600-\u06ff]/u.test(source) || /\\usepackage\s*\{\s*(?:xepersian|fontspec)\s*\}/u.test(source);
-    const language = needsXe && !/\\usepackage\s*\{\s*xepersian\s*\}/u.test(settings.preamble)
-      ? `\\usepackage{xepersian}\n\\settextfont{${escapeTex(settings.persianFont)}}\n` : "";
-    const body = source.trim();
-    if (/^\\documentclass\b/u.test(body) && /\\begin\{document\}/u.test(body)) return body.endsWith("\n") ? body : `${body}\n`;
-    const hasPictureEnvironment = /\\begin\{(?:tikzpicture|circuitikz|pgfonlayer|axis)\}/u.test(body);
-    const wrapper = hasPictureEnvironment ? body : `\\begin{tikzpicture}\n${body}\n\\end{tikzpicture}`;
-    return `\\documentclass{${needsXe ? "article" : "standalone"}}\n${settings.preamble}\n${language}\\begin{document}\n${wrapper}\n\\end{document}\n`;
-  }
-
-  private compilerArgs(tex: string, work: string): string[] {
-    return ["-interaction=nonstopmode", "-halt-on-error", "-file-line-error", "-no-shell-escape", "-output-directory", work, tex];
-  }
-
-  private selectEngine(source: string, settings: TikzSettings): EnginePlan {
-    let engine: Exclude<Engine, "auto">;
-    if (settings.engine !== "auto") engine = settings.engine;
-    else if (/\\usepackage\s*\{\s*(?:xepersian|fontspec)\s*\}|[\u0600-\u06ff]/u.test(source)) engine = "xelatex";
-    else if (/graphdrawing/iu.test(source) || /\\usetikzlibrary\s*\{[^}]*graphdrawing[^}]*\}/isu.test(source)) engine = "lualatex";
-    else if (/\\(?:special|dvips)/u.test(source)) engine = "latex";
-    else engine = "pdflatex";
-    const executable = ({ latex: settings.latexPath, pdflatex: settings.pdflatexPath, xelatex: settings.xelatexPath, lualatex: settings.lualatexPath, dvilualatex: settings.dvilualatexPath } as Record<Exclude<Engine, "auto">, string>)[engine];
-    return { engine, executable, outputType: engine === "latex" || engine === "dvilualatex" ? "dvi" : "pdf" };
   }
 
   private hash(source: string, kind: BlockKind, plan: EnginePlan, settings: TikzSettings): string {
@@ -149,6 +123,34 @@ export class RenderService {
     const detail = log.length > 30000 ? `${log.slice(-30000)}\n[log truncated]` : log;
     return new RenderError(`${base.message}\n\n--- TeX log ---\n${detail}`, base.details);
   }
+}
+
+export function selectEngine(source: string, settings: TikzSettings): EnginePlan {
+  let engine: Exclude<Engine, "auto">;
+  const text = `${settings.preamble}\n${source}`;
+  if (settings.engine !== "auto") engine = settings.engine;
+  else if (/\\usepackage\s*\{\s*(?:xepersian|fontspec)\s*\}|[\u0600-\u06ff]/u.test(text)) engine = "xelatex";
+  else if (/graphdrawing/iu.test(text) || /\\usetikzlibrary\s*\{[^}]*graphdrawing[^}]*\}/isu.test(text)) engine = "lualatex";
+  else if (/\\(?:special|dvips)/u.test(source)) engine = "latex";
+  else engine = "pdflatex";
+  const executable = ({ latex: settings.latexPath, pdflatex: settings.pdflatexPath, xelatex: settings.xelatexPath, lualatex: settings.lualatexPath, dvilualatex: settings.dvilualatexPath } as Record<Exclude<Engine, "auto">, string>)[engine];
+  return { engine, executable, outputType: engine === "latex" || engine === "dvilualatex" ? "dvi" : "pdf" };
+}
+
+export function buildDocument(source: string, settings: TikzSettings): string {
+  const text = `${settings.preamble}\n${source}`;
+  const needsXe = /[\u0600-\u06ff]/u.test(text) || /\\usepackage\s*\{\s*(?:xepersian|fontspec)\s*\}/u.test(text);
+  const needsXepersian = needsXe && !/\\usepackage\s*\{\s*xepersian\s*\}/u.test(settings.preamble) && /[\u0600-\u06ff]/u.test(source);
+  const language = needsXepersian ? `\\usepackage{xepersian}\n\\settextfont{${escapeTex(settings.persianFont)}}\n` : "";
+  const body = source.trim();
+  if (/^\\documentclass\b/u.test(body) && /\\begin\{document\}/u.test(body)) return body.endsWith("\n") ? body : `${body}\n`;
+  const hasPictureEnvironment = /\\begin\{(?:tikzpicture|circuitikz|pgfonlayer|axis)\}/u.test(body);
+  const wrapper = hasPictureEnvironment ? body : `\\begin{tikzpicture}\n${body}\n\\end{tikzpicture}`;
+  return `\\documentclass{${needsXe ? "article" : "standalone"}}\n${settings.preamble}\n${language}\\begin{document}\n${wrapper}\n\\end{document}\n`;
+}
+
+export function compilerArgs(tex: string, work: string): string[] {
+  return ["-interaction=nonstopmode", "-halt-on-error", "-file-line-error", "-no-shell-escape", "-output-directory", work, tex];
 }
 
 function escapeTex(value: string): string { return value.replace(/[{}%\\]/g, "\\$&"); }
