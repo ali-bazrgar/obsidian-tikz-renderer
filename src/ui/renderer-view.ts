@@ -62,7 +62,7 @@ export class TikzRendererView extends MarkdownRenderChild {
     if (parserError || svgDocument.documentElement.tagName.toLowerCase() !== "svg") {
       throw new Error("The TeX renderer produced invalid SVG output.");
     }
-    const svg = documentRef.importNode(svgDocument.documentElement, true) as SVGSVGElement;
+    const svg = documentRef.importNode(svgDocument.documentElement, true) as unknown as SVGSVGElement;
     svg.classList.add("tikz-renderer-svg");
     svg.setAttribute("aria-label", "TikZ diagram");
     svg.setAttribute("role", "img");
@@ -111,8 +111,6 @@ export class TikzRendererView extends MarkdownRenderChild {
       const width = Math.min(panelRect.width || 240, Math.max(180, viewportWidth - 16));
       const height = Math.min(panelRect.height || 240, Math.max(120, viewportHeight - 16));
 
-      // Position relative to the shell. The panel stays attached to the
-      // figure instead of becoming a global fixed element at (0, 0).
       let left = buttonRect.right - shellRect.left + gap;
       if (left + width > shellRect.width) left = buttonRect.left - shellRect.left - width - gap;
       left = Math.max(4, Math.min(left, Math.max(4, shellRect.width - width - 4)));
@@ -155,8 +153,6 @@ export class TikzRendererView extends MarkdownRenderChild {
 
     const applyZoom = (): void => {
       if (naturalWidth > 0 && naturalHeight > 0) {
-        // Real SVG layout dimensions, not transform:scale(). The surrounding
-        // paper therefore follows the actual zoomed figure size.
         svg.style.width = `${naturalWidth * zoom}px`;
         svg.style.height = `${naturalHeight * zoom}px`;
         svg.style.maxWidth = "none";
