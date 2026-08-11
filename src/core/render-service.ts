@@ -8,7 +8,7 @@ import { BlockKind, Engine, InstallationResult, RenderResult } from "./types";
 import { TikzSettings } from "../settings/settings";
 
 const execFileAsync = promisify(execFile);
-const PIPELINE_VERSION = "2";
+const PIPELINE_VERSION = "3";
 const MAX_OUTPUT = 4 * 1024 * 1024;
 
 export class RenderError extends Error {
@@ -38,7 +38,7 @@ export class RenderService {
   async render(source: string, kind: BlockKind): Promise<RenderResult> {
     if (this.disposed) throw new RenderError("Renderer is shutting down.");
     const settings = this.getSettings();
-    const plan = this.selectEngine(source, kind, settings);
+    const plan = this.selectEngine(source, settings);
     const hash = this.hash(source, kind, plan, settings);
     const pending = this.inflight.get(hash);
     if (pending) return pending;
@@ -103,7 +103,7 @@ export class RenderService {
     const work = path.join(cache, `work-${hash}-${randomBytes(6).toString("hex")}`);
     await fs.mkdir(work, { recursive: true });
     const texPath = path.join(work, "main.tex");
-    await fs.writeFile(texPath, this.buildDocument(source, kind, settings), "utf8");
+    await fs.writeFile(texPath, this.buildDocument(source, settings), "utf8");
 
     try {
       await this.run(plan.executable, this.compilerArgs(texPath, work), work, settings.compileTimeout);
@@ -124,7 +124,7 @@ export class RenderService {
     }
   }
 
-  private buildDocument(source: string, kind: BlockKind, settings: TikzSettings): string {
+  private buildDocument(source: string, settings: TikzSettings): string {
     const arabic = /[\u0600-\u06ff]/u.test(source);
     const needsXe = arabic || /\\usepackage\s*\{\s*(?:xepersian|fontspec)\s*\}/u.test(source);
     const language = needsXe ? `\\usepackage{xepersian}\n\\settextfont{${escapeTex(settings.persianFont)}}\n` : "";
@@ -132,11 +132,8 @@ export class RenderService {
     const alreadyDocument = /^\\documentclass\b/u.test(body) && /\\begin\{document\}/u.test(body);
     if (alreadyDocument) return body.endsWith("\n") ? body : `${body}\n`;
 
-    const wrapper = kind === "circuitikz"
-      ? `\\begin{circuitikz}\n${body}\n\\end{circuitikz}`
-      : kind === "tikz" || kind === "pgfplots"
-        ? `\\begin{tikzpicture}\n${body}\n\\end{tikzpicture}`
-        : body;
+    const hasPictureEnvironment = /\\begin\{(?:tikzpicture|circuitikz|pgfonlayer|axis)\}/u.test(body);
+    const wrapper = hasPictureEnvironment ? body : `\\begin{tikzpicture}\n${body}\n\\end{tikzpicture}`;
 
     return `\\documentclass{${needsXe ? "article" : "standalone"}}\n${settings.preamble}\n${language}\\begin{document}\n${wrapper}\n\\end{document}\n`;
   }
@@ -145,13 +142,13 @@ export class RenderService {
     return ["-interaction=nonstopmode", "-halt-on-error", "-file-line-error", "-no-shell-escape", "-output-directory", work, tex];
   }
 
-  private selectEngine(source: string, kind: BlockKind, settings: TikzSettings): EnginePlan {
+  private selectEngine(source: string, settings: TikzSettings): EnginePlan {
     let engine: Exclude<Engine, "auto">;
     if (settings.engine !== "auto") {
       engine = settings.engine;
     } else if (/\\usepackage\s*\{\s*(?:xepersian|fontspec)\s*\}|[\u0600-\u06ff]/u.test(source)) {
       engine = "xelatex";
-    } else if (/graphdrawing/iu.test(source) && /lua/iu.test(source)) {
+    } else if (/graphdrawing/iu.test(source) || /\\usetikzlibrary\s*\{[^}]*graphs[^}]*graphdrawing/isu.test(source)) {
       engine = "lualatex";
     } else if (/\\(?:special|dvips)/u.test(source)) {
       engine = "latex";
