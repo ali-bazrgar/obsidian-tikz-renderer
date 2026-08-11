@@ -6,9 +6,10 @@ import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { BlockKind, Engine, InstallationResult, RenderResult } from "./types";
 import { TikzSettings } from "../settings/settings";
+import { ConcurrencyLimiter } from "./concurrency";
 
 const execFileAsync = promisify(execFile);
-const PIPELINE_VERSION = "3";
+const PIPELINE_VERSION = "4";
 const MAX_OUTPUT = 4 * 1024 * 1024;
 
 export class RenderError extends Error {
@@ -26,6 +27,7 @@ interface EnginePlan {
 
 export class RenderService {
   private readonly inflight = new Map<string, Promise<RenderResult>>();
+  private readonly limiter = new ConcurrencyLimiter(2);
   private disposed = false;
 
   constructor(private readonly app: App, private readonly getSettings: () => TikzSettings) {}
@@ -43,7 +45,7 @@ export class RenderService {
     const pending = this.inflight.get(hash);
     if (pending) return pending;
 
-    const task = this.renderInternal(source, kind, plan, hash, settings);
+    const task = this.limiter.run(() => this.renderInternal(source, kind, plan, hash, settings));
     this.inflight.set(hash, task);
     try {
       return await task;
@@ -84,10 +86,7 @@ export class RenderService {
     ];
     const results: Record<string, boolean> = {};
     for (const [name, executable] of pairs) results[name] = await this.commandWorks(executable);
-    return {
-      results,
-      summary: pairs.map(([name]) => `${name}: ${results[name] ? "OK" : "FAILED"}`).join("\n"),
-    };
+    return { results, summary: pairs.map(([name]) => `${name}: ${results[name] ? "OK" : "FAILED"}`).join("\n") };
   }
 
   private async renderInternal(source: string, kind: BlockKind, plan: EnginePlan, hash: string, settings: TikzSettings): Promise<RenderResult> {
@@ -134,7 +133,6 @@ export class RenderService {
 
     const hasPictureEnvironment = /\\begin\{(?:tikzpicture|circuitikz|pgfonlayer|axis)\}/u.test(body);
     const wrapper = hasPictureEnvironment ? body : `\\begin{tikzpicture}\n${body}\n\\end{tikzpicture}`;
-
     return `\\documentclass{${needsXe ? "article" : "standalone"}}\n${settings.preamble}\n${language}\\begin{document}\n${wrapper}\n\\end{document}\n`;
   }
 
@@ -144,17 +142,11 @@ export class RenderService {
 
   private selectEngine(source: string, settings: TikzSettings): EnginePlan {
     let engine: Exclude<Engine, "auto">;
-    if (settings.engine !== "auto") {
-      engine = settings.engine;
-    } else if (/\\usepackage\s*\{\s*(?:xepersian|fontspec)\s*\}|[\u0600-\u06ff]/u.test(source)) {
-      engine = "xelatex";
-    } else if (/graphdrawing/iu.test(source) || /\\usetikzlibrary\s*\{[^}]*graphs[^}]*graphdrawing/isu.test(source)) {
-      engine = "lualatex";
-    } else if (/\\(?:special|dvips)/u.test(source)) {
-      engine = "latex";
-    } else {
-      engine = "pdflatex";
-    }
+    if (settings.engine !== "auto") engine = settings.engine;
+    else if (/\\usepackage\s*\{\s*(?:xepersian|fontspec)\s*\}|[\u0600-\u06ff]/u.test(source)) engine = "xelatex";
+    else if (/graphdrawing/iu.test(source) || /\\usetikzlibrary\s*\{[^}]*graphdrawing[^}]*\}/isu.test(source)) engine = "lualatex";
+    else if (/\\(?:special|dvips)/u.test(source)) engine = "latex";
+    else engine = "pdflatex";
 
     const executable = ({ latex: settings.latexPath, pdflatex: settings.pdflatexPath, xelatex: settings.xelatexPath, lualatex: settings.lualatexPath, dvilualatex: settings.dvilualatexPath } as Record<Exclude<Engine, "auto">, string>)[engine];
     return { engine, executable, outputType: engine === "latex" || engine === "dvilualatex" ? "dvi" : "pdf" };
