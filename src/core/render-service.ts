@@ -12,7 +12,7 @@ import { augmentPreamble } from "./tex-package-detector";
 import { TeXDependencyResolver } from "./tex-dependency-resolver";
 
 const execFileAsync = promisify(execFile);
-const PIPELINE_VERSION = "15-texlive-block-resolver-pdf-mutool-svg";
+const PIPELINE_VERSION = "16-texlive-block-resolver-pdf-svg-stdout";
 const MAX_OUTPUT = 4 * 1024 * 1024;
 const MAX_DEPENDENCY_RETRIES = 3;
 
@@ -106,15 +106,33 @@ export class RenderService {
     const output = path.join(work, "main.svg");
     if (outputType === "pdf") {
       const mutool = settings.mutoolPath.trim() || "mutool";
-      // MuPDF does not reliably infer SVG output from the .svg filename alone.
-      // Explicitly select SVG so PDF-based engines (pdflatex/xelatex/lualatex)
-      // always produce the artifact expected by the renderer.
-      await this.run(mutool, ["draw", "-q", "-F", "svg", "-o", output, input, "1"], work, settings.compileTimeout);
+      // Use stdout first. This avoids Windows/older-MuPDF filename-template
+      // differences where mutool exits successfully but writes main-1.svg.
+      const result = await this.runCapture(mutool, ["draw", "-q", "-F", "svg", "-o", "-", input, "1"], work, settings.compileTimeout);
+      const stdout = String(result.stdout ?? "").trim();
+      if (stdout.startsWith("<svg") || /<svg\b/i.test(stdout)) {
+        const svgStart = stdout.search(/<svg\b/i);
+        await fs.writeFile(output, stdout.slice(svgStart), "utf8");
+      }
+
+      // Fallback for MuPDF builds that do not support stdout SVG output.
+      if (!await this.exists(output)) {
+        await this.run(mutool, ["draw", "-q", "-F", "svg", "-o", output, input, "1"], work, settings.compileTimeout);
+      }
+
+      // Some MuPDF builds create a numbered filename even for one page.
+      if (!await this.exists(output)) {
+        const numbered = path.join(work, "main-1.svg");
+        if (await this.exists(numbered)) await fs.rename(numbered, output);
+      }
     } else {
       const dvisvgm = settings.dvisvgmPath.trim() || "dvisvgm";
       await this.run(dvisvgm, ["-n", input, "-o", output], work, settings.compileTimeout);
     }
-    if (!await this.exists(output)) throw new RenderError("The vector converter completed without producing an SVG file.");
+    if (!await this.exists(output)) {
+      const files = await fs.readdir(work).catch(() => []);
+      throw new RenderError(`The vector converter completed without producing an SVG file. Files in work directory: ${files.join(", ")}`);
+    }
     return sanitizeSvg(await fs.readFile(output, "utf8"));
   }
 
@@ -131,6 +149,19 @@ export class RenderService {
   private async run(executable: string, args: string[], cwd: string, timeout: number): Promise<void> {
     try { await execFileAsync(executable, args, { cwd, timeout, windowsHide: true, maxBuffer: MAX_OUTPUT }); }
     catch (error) {
+      const x = error as NodeJS.ErrnoException & { killed?: boolean; stdout?: string; stderr?: string };
+      if (x.code === "ENOENT") throw new RenderError(`Executable not found: ${executable}`, x.message);
+      if (x.code === "ETIMEDOUT" || x.killed) throw new RenderError(`Process timed out after ${timeout} ms: ${executable}`, x.stderr ?? x.message);
+      if (x.code === "EACCES") throw new RenderError(`Permission denied: ${executable}`, x.message);
+      throw new RenderError(`Process failed: ${executable}`, [x.stderr, x.stdout, x.message].filter(Boolean).join("\n"));
+    }
+  }
+
+  private async runCapture(executable: string, args: string[], cwd: string, timeout: number): Promise<{ stdout?: string; stderr?: string }> {
+    try {
+      const result = await execFileAsync(executable, args, { cwd, timeout, windowsHide: true, maxBuffer: MAX_OUTPUT });
+      return { stdout: String(result.stdout ?? ""), stderr: String(result.stderr ?? "") };
+    } catch (error) {
       const x = error as NodeJS.ErrnoException & { killed?: boolean; stdout?: string; stderr?: string };
       if (x.code === "ENOENT") throw new RenderError(`Executable not found: ${executable}`, x.message);
       if (x.code === "ETIMEDOUT" || x.killed) throw new RenderError(`Process timed out after ${timeout} ms: ${executable}`, x.stderr ?? x.message);
