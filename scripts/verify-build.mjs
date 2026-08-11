@@ -46,8 +46,8 @@ if (!compactCss.includes('.tikz-renderer-controls{position:absolute') || !compac
 if (!compactCss.includes('.tikz-renderer-paper{position:relative;display:contents}')) throw new Error("The old visual paper layer must not create a second figure window.");
 if (!css.includes('.tikz-renderer-shell{') || !css.includes('background:var(--tikz-figure-bg)')) throw new Error("Theme background must be applied to the figure shell only.");
 if (!css.includes('.tikz-renderer-shell:not([data-theme="custom"]) .tikz-renderer-svg')) throw new Error("Custom theme must preserve the SVG's original black colors.");
-if (!css.includes('.markdown-preview-view .tikz-generated-asset-link{display:none!important')) throw new Error("Generated SVG wikilinks must be hidden only in Reading view.");
-if (!css.includes('.markdown-preview-view .tikz-generated-edit-link{display:none!important')) throw new Error("Generated Edit links must be hidden only in Reading view.");
+if (!css.includes('.markdown-preview-view a.tikz-generated-asset-link') || !css.includes('display:none!important')) throw new Error("Generated SVG wikilinks must be hidden only in Reading view.");
+if (!css.includes('.markdown-preview-view a.tikz-generated-edit-link') || !css.includes('display:none!important')) throw new Error("Generated Edit links must be hidden only in Reading view.");
 if (!css.includes('.markdown-source-view .tikz-renderer-controls{display:flex!important')) throw new Error("Writing-view TikZ controls must remain visible.");
 if (css.includes('.markdown-source-view .tikz-renderer-panel{display:grid}')) throw new Error("Writing-view panel CSS must not override the hidden attribute at startup.");
 if (!css.includes('.markdown-source-view .tikz-renderer-panel:not([hidden]){display:grid}')) throw new Error("Writing-view panel must only become a grid when explicitly opened.");
