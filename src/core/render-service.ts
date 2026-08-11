@@ -9,12 +9,12 @@ import { BlockKind, EnginePlan, RenderResult } from "./types";
 import { ConcurrencyLimiter } from "./concurrency";
 import { probeAllExecutables, TeXExecutableName, texLiveExecutableCandidates } from "./executable-detector";
 import { augmentPreamble } from "./tex-package-detector";
+import { TeXDependencyResolver } from "./tex-dependency-resolver";
 
 const execFileAsync = promisify(execFile);
-// Bump whenever the generated TeX/preamble pipeline changes so old SVG cache
-// entries can never mask a renderer fix.
-const PIPELINE_VERSION = "10-source-driven-preamble-and-links";
+const PIPELINE_VERSION = "11-texlive-dependency-resolver";
 const MAX_OUTPUT = 4 * 1024 * 1024;
+const MAX_DEPENDENCY_RETRIES = 6;
 
 export class RenderError extends Error {
   constructor(message: string, readonly details?: string) { super(message); this.name = "RenderError"; }
@@ -76,19 +76,43 @@ export class RenderService {
     const work = path.join(cache, `work-${hash}-${Math.random().toString(36).slice(2, 10)}`);
     await fs.mkdir(cache, { recursive: true });
     await fs.mkdir(work, { recursive: true });
+
+    let effectivePreamble = augmentPreamble(settings.preamble, source);
+    let lastLog = "";
+
     try {
-      await fs.writeFile(path.join(work, "main.tex"), buildDocument(source, settings), "utf8");
-      await this.run(plan.executable, compilerArgs("main.tex", work, plan.outputType), work, settings.compileTimeout);
+      const resolver = new TeXDependencyResolver(settings.texLiveRoot, plan.executable);
+      const preflight = await resolver.resolve(settings.preamble, source, effectivePreamble);
+      effectivePreamble = preflight.preamble;
+
+      for (let attempt = 0; attempt <= MAX_DEPENDENCY_RETRIES; attempt += 1) {
+        const tex = buildDocument(source, settings, effectivePreamble);
+        await fs.writeFile(path.join(work, "main.tex"), tex, "utf8");
+
+        try {
+          await this.run(plan.executable, compilerArgs("main.tex", work, plan.outputType), work, settings.compileTimeout);
+          lastLog = await this.readLog(work);
+          break;
+        } catch (error) {
+          lastLog = await this.readLog(work);
+          if (attempt >= MAX_DEPENDENCY_RETRIES) throw this.normalizeError(error, lastLog);
+
+          const resolved = await resolver.resolveFromLog(source, effectivePreamble, lastLog);
+          if (!resolved.added.length) throw this.normalizeError(error, lastLog);
+          effectivePreamble = resolved.preamble;
+        }
+      }
 
       const extension = plan.outputType === "pdf" ? "pdf" : plan.outputType === "xdv" ? "xdv" : "dvi";
       const input = path.join(work, `main.${extension}`);
-      if (!await this.exists(input)) throw new RenderError(`TeX compiler completed without producing ${path.basename(input)}.`);
+      if (!await this.exists(input)) throw new RenderError(`TeX compiler completed without producing ${path.basename(input)}.`, lastLog);
 
       const svg = await this.convertToSvg(input, plan.outputType, work, settings);
       await fs.writeFile(cached, svg, "utf8");
       return { hash, svg, engine: plan.engine, fromCache: false, source, kind };
     } catch (error) {
-      throw this.normalizeError(error, await this.readLog(work));
+      if (error instanceof RenderError && error.message.includes("--- TeX log ---")) throw error;
+      throw this.normalizeError(error, lastLog || await this.readLog(work));
     } finally {
       if (!settings.keepTexSource) await fs.rm(work, { recursive: true, force: true }).catch(() => undefined);
     }
@@ -96,20 +120,23 @@ export class RenderService {
 
   private async convertToSvg(input: string, outputType: EnginePlan["outputType"], work: string, settings: TikzSettings): Promise<string> {
     const output = path.join(work, "main.svg");
-
     if (outputType === "pdf") {
       const mutool = settings.mutoolPath.trim() || "mutool";
       await this.run(mutool, ["draw", "-q", "-o", output, input, "1"], work, settings.compileTimeout);
     } else {
       await this.run(settings.dvisvgmPath, ["-n", input, "-o", output], work, settings.compileTimeout);
     }
-
     if (!await this.exists(output)) throw new RenderError("The vector converter completed without producing an SVG file.");
     return sanitizeSvg(await fs.readFile(output, "utf8"));
   }
 
   private hash(source: string, kind: BlockKind, plan: EnginePlan, settings: TikzSettings): string {
-    return createHash("sha256").update(JSON.stringify({ source, kind, engine: plan.engine, executable: plan.executable, outputType: plan.outputType, preamble: augmentPreamble(settings.preamble, source), font: settings.persianFont, dvisvgm: settings.dvisvgmPath, mutool: settings.mutoolPath, pipeline: PIPELINE_VERSION })).digest("hex");
+    return createHash("sha256").update(JSON.stringify({
+      source, kind, engine: plan.engine, executable: plan.executable, outputType: plan.outputType,
+      preamble: augmentPreamble(settings.preamble, source), texLiveRoot: settings.texLiveRoot,
+      font: settings.persianFont, dvisvgm: settings.dvisvgmPath, mutool: settings.mutoolPath,
+      pipeline: PIPELINE_VERSION,
+    })).digest("hex");
   }
 
   private cacheRoot(): string {
@@ -153,11 +180,11 @@ export function selectEngine(source: string, settings: TikzSettings): EnginePlan
   return { engine, executable, outputType };
 }
 
-export function buildDocument(source: string, settings: TikzSettings): string {
+export function buildDocument(source: string, settings: TikzSettings, preambleOverride?: string): string {
   const body = source.trim();
   if (/^\\documentclass\b/u.test(body) && /\\begin\{document\}/u.test(body)) return body.endsWith("\n") ? body : `${body}\n`;
 
-  const effectivePreamble = augmentPreamble(settings.preamble, source);
+  const effectivePreamble = preambleOverride ?? augmentPreamble(settings.preamble, source);
   const text = `${effectivePreamble}\n${source}`;
   const needsXe = /[\u0600-\u06ff]/u.test(text) || /\\usepackage\s*\{\s*(?:xepersian|fontspec)\s*\}/u.test(text);
   const needsXepersian = needsXe && !/\\usepackage\s*\{\s*xepersian\s*\}/u.test(effectivePreamble) && /[\u0600-\u06ff]/u.test(source);
