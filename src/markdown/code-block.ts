@@ -85,13 +85,12 @@ async function ensureSourceAssetLinks(app: App, sourcePath: string, section: Mar
   await app.vault.process(file, data => {
     const eol = data.includes("\r\n") ? "\r\n" : "\n";
     const lines = data.split(/\r?\n/u);
-    // The old generated "✎ Edit TikZ" line is now redundant because the
-    // renderer's own controls provide source editing. Remove any legacy line
-    // for this exact block, but never remove a user-authored link with another
-    // target/key.
+    // The renderer owns source editing now. Remove both current and legacy
+    // plugin-generated Edit TikZ lines. The target must contain the private
+    // tikz-edit marker, so ordinary user links are never touched.
     for (let index = lines.length - 1; index >= 0; index -= 1) {
       const trimmed = lines[index].trim();
-      if (trimmed.includes(generatedEditMarker)) lines.splice(index, 1);
+      if (trimmed.includes(generatedEditMarker) || /^\[✎\s*Edit TikZ\]\(\s*#tikz-edit\\?:/u.test(trimmed)) lines.splice(index, 1);
       else if (trimmed === wikilink) lines.splice(index, 1);
     }
     const insertionOffset = findNthLineOffset(data, section.lineEnd + 1);
@@ -104,10 +103,12 @@ async function ensureSourceAssetLinks(app: App, sourcePath: string, section: Mar
 function lineIndexAtOffset(text: string, offset: number): number { let line = 0; for (let index = 0; index < offset && index < text.length; index += 1) if (text[index] === "\n") line += 1; return line; }
 
 function makeHistoryKey(ctx: MarkdownPostProcessorContext, section: MarkdownSectionInformation | null, kind: BlockKind, source: string): string {
-  // The block identity must survive Reading/Live Preview reconstruction. A
-  // source hash is stable while the TikZ source is unchanged and does not
-  // depend on Obsidian's mutable section line numbers or generated links.
-  const sourceHash = createHash("sha256").update(source).digest("hex").slice(0, 24);
+  // Canonicalize line endings and trailing whitespace so Live Preview and
+  // Reading View cannot accidentally create different identities for the same
+  // TikZ block. The identity deliberately does not depend on mutable section
+  // line numbers or generated links.
+  const canonicalSource = source.replace(/\r\n/gu, "\n").replace(/[ \t]+$/gmu, "").trimEnd();
+  const sourceHash = createHash("sha256").update(canonicalSource).digest("hex").slice(0, 32);
   return `${ctx.sourcePath}:${kind}:${sourceHash}`;
 }
 
