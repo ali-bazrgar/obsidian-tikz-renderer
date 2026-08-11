@@ -15,6 +15,7 @@ export interface RenderResult {
   fromCache: boolean;
   source: string;
   kind: BlockKind;
+  assetPath?: string;
 }
 
 export interface InstallationResult {
