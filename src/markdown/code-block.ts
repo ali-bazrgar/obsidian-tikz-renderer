@@ -5,24 +5,23 @@ import { RenderService } from "../core/render-service";
 import { ExportService } from "../core/export-service";
 import { TikzHistoryStore } from "../core/history";
 import { TikzRendererView } from "../ui/renderer-view";
+import { TikzSettings } from "../settings/settings";
 
 export class TikzMarkdownProcessor {
-  static async process(app: App, exportService: ExportService, history: TikzHistoryStore, kind: BlockKind, source: string, el: HTMLElement, ctx: MarkdownPostProcessorContext, service: RenderService): Promise<void> {
-    // Clear the processor container BEFORE creating our host. Calling
-    // el.empty() after createDiv() would remove the host and make both the
-    // loading state and the eventual SVG invisible.
+  static async process(app: App, exportService: ExportService, history: TikzHistoryStore, kind: BlockKind, source: string, el: HTMLElement, ctx: MarkdownPostProcessorContext, service: RenderService, getSettings: () => TikzSettings, saveSettings: (settings: TikzSettings) => Promise<void>): Promise<void> {
     el.empty();
     const host = el.createDiv({ cls: "tikz-renderer-block" });
-    host.createDiv({ cls: "tikz-renderer-status", text: "Rendering TikZ…" });
+    host.createDiv({ cls: "tikz-renderer-status", text: "" });
     const section = ctx.getSectionInfo(el);
     const historyKey = makeHistoryKey(ctx, section, kind, source);
     history.record(historyKey, source);
     try {
       const result = await service.render(source, kind);
       if (!el.isConnected) return;
-      new TikzRendererView(app, exportService, host, result, source, service, kind, history, historyKey, async (nextSource) => {
+      result.assetPath = await exportService.saveSvg(result.svg, result.hash, ctx.sourcePath, false);
+      new TikzRendererView(app, exportService, host, result, source, ctx.sourcePath, service, kind, history, historyKey, async (nextSource) => {
         await replaceSource(app, ctx, el, kind, nextSource);
-      }).render();
+      }, getSettings, saveSettings).render();
     } catch (error) {
       if (!el.isConnected) return;
       host.empty();
@@ -55,21 +54,14 @@ async function replaceSource(app: App, ctx: MarkdownPostProcessorContext, el: HT
   if (closeIndex < 0) throw new Error("Could not locate the closing TikZ fence.");
 
   const normalizedSource = nextSource.replace(/\r?\n$/u, "");
-  const replacementLines = [
-    ...originalLines.slice(0, openIndex + 1),
-    ...normalizedSource.split(/\r?\n/u),
-    "```",
-    ...originalLines.slice(closeIndex + 1),
-  ];
+  const replacementLines = [...originalLines.slice(0, openIndex + 1), ...normalizedSource.split(/\r?\n/u), "```", ...originalLines.slice(closeIndex + 1)];
   const replacement = replacementLines.join("\n");
 
   await app.vault.process(file, (data) => {
     const sectionStart = findNthLineOffset(data, section.lineStart);
     const sectionEnd = findNthLineOffset(data, section.lineEnd);
     const currentSection = data.slice(sectionStart, sectionEnd);
-    if (currentSection.replace(/\r\n/gu, "\n") !== section.text.replace(/\r\n/gu, "\n")) {
-      throw new Error("The note changed before the edit could be applied. Please render again and retry.");
-    }
+    if (currentSection.replace(/\r\n/gu, "\n") !== section.text.replace(/\r\n/gu, "\n")) throw new Error("The note changed before the edit could be applied. Please render again and retry.");
     const eol = data.includes("\r\n") ? "\r\n" : "\n";
     const replacementWithEol = replacement.replace(/\n/gu, eol);
     return `${data.slice(0, sectionStart)}${replacementWithEol}${data.slice(sectionEnd)}`;
