@@ -5,10 +5,13 @@ import { ExportService } from "../core/export-service";
 import { TikzHistoryStore } from "../core/history";
 import { DisplayTheme, TikzSettings } from "../settings/settings";
 
+type TikzViewState = { zoom: number; panX: number; panY: number };
+
 export class TikzRendererView extends MarkdownRenderChild {
   private cleanup?: () => void;
   private static readonly activeViews = new Map<string, TikzRendererView>();
   private static readonly allViews = new Set<TikzRendererView>();
+  private static readonly viewStates = new Map<string, TikzViewState>();
 
   constructor(
     private readonly app: App,
@@ -55,14 +58,23 @@ export class TikzRendererView extends MarkdownRenderChild {
     panel.hidden = true;
     panel.setAttribute("role", "menu");
 
-    let zoom = clampZoom(this.getSettings().defaultZoom / 100);
+    const stateKey = `${this.sourcePath}::${this.historyKey}`;
+    const persisted = TikzRendererView.viewStates.get(stateKey) ?? loadViewState(stateKey);
+    if (persisted) TikzRendererView.viewStates.set(stateKey, persisted);
+    let zoom = clampZoom(persisted?.zoom ?? this.getSettings().defaultZoom / 100);
     let naturalWidth = 0;
     let naturalHeight = 0;
-    let panX = 0;
-    let panY = 0;
+    let panX = persisted?.panX ?? 0;
+    let panY = persisted?.panY ?? 0;
     let dragging = false;
     let lastX = 0;
     let lastY = 0;
+
+    const persistViewState = (): void => {
+      const state: TikzViewState = { zoom, panX, panY };
+      TikzRendererView.viewStates.set(stateKey, state);
+      saveViewState(stateKey, state);
+    };
 
     const closePanel = (): void => {
       panel.hidden = true;
@@ -90,7 +102,7 @@ export class TikzRendererView extends MarkdownRenderChild {
 
     const positionControls = (): void => {
       if (!shell.isConnected) return;
-      const rect = shell.getBoundingClientRect();
+      const rect = viewport.getBoundingClientRect();
       const h = win?.innerHeight ?? doc.documentElement.clientHeight;
       const w = win?.innerWidth ?? doc.documentElement.clientWidth;
       const visible = rect.width > 0 && rect.height > 0 && rect.bottom > 0 && rect.top < h && rect.right > 0 && rect.left < w;
@@ -141,11 +153,11 @@ export class TikzRendererView extends MarkdownRenderChild {
       positionPanel();
     };
 
-    const resetView = (): void => { zoom = clampZoom(this.getSettings().defaultZoom / 100); panX = 0; panY = 0; applyZoom(); };
+    const resetView = (): void => { zoom = clampZoom(this.getSettings().defaultZoom / 100); panX = 0; panY = 0; persistViewState(); applyZoom(); };
     const fit = (): void => {
       if (!ensureIntrinsicSize()) return;
       zoom = clampZoom(Math.min(1, Math.max(1, this.containerEl.clientWidth) / naturalWidth));
-      panX = 0; panY = 0; applyZoom();
+      panX = 0; panY = 0; persistViewState(); applyZoom();
     };
 
     const addButton = (label: string, action: () => void | Promise<void>): void => {
@@ -199,8 +211,8 @@ export class TikzRendererView extends MarkdownRenderChild {
     const buildMainPanel = (): void => {
       panel.empty();
       panel.createDiv({ cls: "tikz-renderer-panel-title", text: "TikZ controls" });
-      addButton("Zoom −", () => { zoom = clampZoom(zoom - 0.25); applyZoom(); });
-      addButton("Zoom +", () => { zoom = clampZoom(zoom + 0.25); applyZoom(); });
+      addButton("Zoom −", () => { zoom = clampZoom(zoom - 0.25); persistViewState(); applyZoom(); });
+      addButton("Zoom +", () => { zoom = clampZoom(zoom + 0.25); persistViewState(); applyZoom(); });
       addButton("Reset view", resetView);
       addButton("Fit", fit);
       addButton("Theme", renderThemeMenu);
@@ -239,7 +251,7 @@ export class TikzRendererView extends MarkdownRenderChild {
     svg.addEventListener("click", (event) => { if (dragging) { event.preventDefault(); return; } event.preventDefault(); event.stopPropagation(); if (zoom <= 1 && this.result.assetPath) this.app.workspace.openLinkText(this.result.assetPath, this.sourcePath, false); });
     viewport.addEventListener("pointerdown", (event) => { if (event.button !== 0 || zoom <= 1) return; dragging = true; lastX = event.clientX; lastY = event.clientY; viewport.setPointerCapture(event.pointerId); viewport.classList.add("is-dragging"); event.preventDefault(); });
     viewport.addEventListener("pointermove", (event) => { if (!dragging) return; panX += event.clientX - lastX; panY += event.clientY - lastY; lastX = event.clientX; lastY = event.clientY; svg.style.transform = `translate3d(${panX}px, ${panY}px, 0)`; event.preventDefault(); });
-    const stopDragging = (): void => { dragging = false; viewport.classList.remove("is-dragging"); };
+    const stopDragging = (): void => { if (!dragging) return; dragging = false; persistViewState(); viewport.classList.remove("is-dragging"); };
     viewport.addEventListener("pointerup", stopDragging); viewport.addEventListener("pointercancel", stopDragging); viewport.addEventListener("lostpointercapture", stopDragging);
 
     const wheel = (event: WheelEvent): void => {
@@ -260,6 +272,7 @@ export class TikzRendererView extends MarkdownRenderChild {
       panX = pointerX - (pointerX - panX) * ratio;
       panY = pointerY - (pointerY - panY) * ratio;
       zoom = nextZoom;
+      persistViewState();
       applyZoom();
     };
     win?.addEventListener("wheel", wheel, { passive: false, capture: true });
@@ -267,7 +280,7 @@ export class TikzRendererView extends MarkdownRenderChild {
     const observer = new MutationObserver(() => { applyTheme(); positionControls(); positionPanel(); });
     observer.observe(doc.body, { attributes: true, attributeFilter: ["class"] });
     const resizeObserver = new ResizeObserver(() => { positionControls(); positionPanel(); });
-    resizeObserver.observe(shell);
+    resizeObserver.observe(viewport);
     const reposition = (): void => { positionControls(); positionPanel(); };
     win?.addEventListener("scroll", reposition, true); win?.addEventListener("resize", reposition);
 
@@ -279,6 +292,7 @@ export class TikzRendererView extends MarkdownRenderChild {
     applyZoom();
 
     this.cleanup = () => {
+      persistViewState();
       doc.removeEventListener("pointerdown", outsidePointerDown, true);
       doc.removeEventListener("keydown", escape, true);
       win?.removeEventListener("wheel", wheel, true);
@@ -297,6 +311,20 @@ export class TikzRendererView extends MarkdownRenderChild {
 
 function detectTheme(doc: Document): string { if (doc.body.classList.contains("theme-dark")) return "dark"; if (doc.body.classList.contains("theme-light")) return "light"; return "obsidian"; }
 function clampZoom(value: number): number { return Math.min(5, Math.max(0.25, value)); }
+
+function viewStorageKey(key: string): string { return `obsidian-tikz-renderer:view:${key}`; }
+function loadViewState(key: string): TikzViewState | undefined {
+  try {
+    const raw = window.localStorage.getItem(viewStorageKey(key));
+    if (!raw) return undefined;
+    const parsed = JSON.parse(raw) as Partial<TikzViewState>;
+    if (!Number.isFinite(parsed.zoom) || !Number.isFinite(parsed.panX) || !Number.isFinite(parsed.panY)) return undefined;
+    return { zoom: clampZoom(Number(parsed.zoom)), panX: Number(parsed.panX), panY: Number(parsed.panY) };
+  } catch { return undefined; }
+}
+function saveViewState(key: string, state: TikzViewState): void {
+  try { window.localStorage.setItem(viewStorageKey(key), JSON.stringify(state)); } catch { /* Obsidian may restrict storage in some embedded contexts. */ }
+}
 
 class TikzSourceModal extends Modal {
   constructor(app: App, private readonly initialSource: string, private readonly onRender: (source: string) => Promise<void>) { super(app); }
