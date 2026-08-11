@@ -8,6 +8,7 @@ export interface TikzSettings {
   xelatexPath: string;
   lualatexPath: string;
   dvilualatexPath: string;
+  dvisvgmPath: string;
   mutoolPath: string;
   texLiveRoot: string;
   assetFolder: string;
@@ -24,9 +25,9 @@ export interface TikzSettings {
 }
 
 // Keep the default preamble deliberately small. Optional packages and TikZ
-// libraries are added by augmentPreamble() when the source actually needs them.
-// This avoids making every tiny TikZ block load pgfplots, circuitikz, forest,
-// smartdiagram, pgfgantt, and dozens of libraries before compilation starts.
+// libraries are resolved from the actual source and, when necessary, from
+// TeX Live's own error messages. This prevents every block from loading heavy
+// packages such as pgfplots, circuitikz, forest, and dozens of libraries.
 export const DEFAULT_PREAMBLE = String.raw`\usepackage{amsmath}
 \usepackage{amssymb}
 \usepackage{amsfonts}
