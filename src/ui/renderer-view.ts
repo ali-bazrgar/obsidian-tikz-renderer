@@ -51,8 +51,6 @@ export class TikzRendererView extends MarkdownRenderChild {
     const isReadingMode = (): boolean => !!shell.closest(".markdown-preview-view");
     const closePanel = (): void => { panel.hidden = true; menu.setAttribute("aria-expanded", "false"); menu.removeAttribute("data-open"); };
 
-    // Width is always derived from the current Obsidian layout. Height is the
-    // user's Edit dimension. Read has no independent geometry state.
     const getViewportWidth = (): number => Math.max(1, Math.round(shell.clientWidth || this.containerEl.clientWidth || viewport.getBoundingClientRect().width || naturalWidth));
     const getViewportHeight = (): number => Math.max(1, Math.round(viewport.clientHeight || viewportHeight || naturalHeight * zoom || 1));
     const syncViewportGeometry = (): void => {
@@ -122,10 +120,13 @@ export class TikzRendererView extends MarkdownRenderChild {
       // Read uses the same interaction temporarily but never persists it;
       // leaving Read restores the exact Edit geometry.
       if (e.ctrlKey) {
-        const heightStep = Math.max(8, Math.min(80, Math.abs(e.deltaY) * 0.75));
-        viewportHeight = clampViewportHeight(viewportHeight + (e.deltaY < 0 ? heightStep : -heightStep));
-        applyZoom();
+        const delta = Number.isFinite(e.deltaY) ? e.deltaY : 0;
+        if (delta === 0) return;
+        const step = Math.max(10, Math.min(100, Math.abs(delta) * 0.5));
+        viewportHeight = clampViewportHeight(viewportHeight + (delta < 0 ? step : -step));
+        clampCurrentPan();
         if (!reading) persistEditViewState();
+        applyZoom();
         return;
       }
 
