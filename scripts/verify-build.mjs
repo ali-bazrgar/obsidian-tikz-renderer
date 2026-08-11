@@ -48,7 +48,7 @@ if (compactCss.includes("tikz-renderer-paper")) throw new Error("The obsolete vi
 if (!compactCss.includes('.tikz-renderer-controls{position:absolute') || !compactCss.includes('left:-28px')) throw new Error("TikZ controls must be attached outside the figure.");
 if (!compactCss.includes('.tikz-renderer-shell{') || !compactCss.includes('background:transparent')) throw new Error("The shell must be visually transparent so it cannot form a second figure.");
 if (!compactCss.includes('.tikz-renderer-viewport{') || !compactCss.includes('background:var(--tikz-figure-bg)')) throw new Error("Theme background must belong to the single visual viewport.");
-if (!compactCss.includes('.tikz-renderer-shell[data-mode="reading"] .tikz-renderer-viewport{pointer-events:none')) throw new Error("Reading mode must lock the figure against pointer interaction.");
+if (!/\.tikz-renderer-shell\[data-mode="reading"\] \.tikz-renderer-viewport\{[^}]*pointer-events:none/u.test(css)) throw new Error("Reading mode must lock the figure against pointer interaction.");
 if (!css.includes('.tikz-renderer-shell:not([data-theme="custom"]) .tikz-renderer-svg')) throw new Error("Custom theme must preserve the SVG's original black colors.");
 if (!css.includes('.markdown-preview-view a.tikz-generated-asset-link') || !css.includes('display:none!important')) throw new Error("Generated SVG wikilinks must be hidden only in Reading view.");
 if (!css.includes('.markdown-preview-view a.tikz-generated-edit-link') || !css.includes('display:none!important')) throw new Error("Generated Edit links must be hidden only in Reading view.");
