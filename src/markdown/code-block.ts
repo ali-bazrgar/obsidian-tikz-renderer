@@ -8,6 +8,7 @@ import { TikzRendererView } from "../ui/renderer-view";
 import { TikzSettings } from "../settings/settings";
 
 const GENERATED_ASSET_CLASS = "tikz-generated-asset-link";
+const GENERATED_EDIT_CLASS = "tikz-generated-edit-link";
 
 export class TikzMarkdownProcessor {
   static async process(app: App, exportService: ExportService, history: TikzHistoryStore, kind: BlockKind, source: string, el: HTMLElement, ctx: MarkdownPostProcessorContext, service: RenderService, getSettings: () => TikzSettings, saveSettings: (settings: TikzSettings) => Promise<void>): Promise<void> {
@@ -21,13 +22,15 @@ export class TikzMarkdownProcessor {
       const result = await service.render(source, kind);
       if (!el.isConnected) return;
       result.assetPath = await exportService.saveSvg(result.svg, result.hash, ctx.sourcePath, false);
-      if (section) await ensureSourceAssetLink(app, ctx.sourcePath, section, result.assetPath);
+      if (section) await ensureSourceAssetLinks(app, ctx.sourcePath, section, result.assetPath);
       const view = new TikzRendererView(app, exportService, host, result, source, ctx.sourcePath, service, kind, history, historyKey, async (nextSource) => {
         await replaceSource(app, ctx, el, kind, nextSource);
       }, getSettings, saveSettings);
       ctx.addChild(view);
       view.render();
-      scheduleGeneratedAssetLinkMark(el, result.assetPath);
+      scheduleGeneratedLinks(el, result.assetPath, historyKey, async () => {
+        await replaceSource(app, ctx, el, kind, source);
+      });
     } catch (error) {
       if (!el.isConnected) return;
       host.empty();
@@ -38,16 +41,16 @@ export class TikzMarkdownProcessor {
   }
 }
 
-function scheduleGeneratedAssetLinkMark(el: HTMLElement, assetPath: string): void {
+function scheduleGeneratedLinks(el: HTMLElement, assetPath: string, historyKey: string, edit: () => Promise<void>): void {
   if (!assetPath) return;
   const mark = (): void => {
-    if (el.isConnected) markGeneratedAssetLinkInReading(el, assetPath);
+    if (el.isConnected) markGeneratedLinks(el, assetPath, historyKey, edit);
   };
   window.setTimeout(mark, 0);
   window.requestAnimationFrame(mark);
 }
 
-function markGeneratedAssetLinkInReading(el: HTMLElement, assetPath: string): void {
+function markGeneratedLinks(el: HTMLElement, assetPath: string, historyKey: string, edit: () => Promise<void>): void {
   const normalizedPath = assetPath.replace(/\\/gu, "/");
   const root = el.parentElement ?? el;
   const links = Array.from(root.querySelectorAll<HTMLAnchorElement>("a.internal-link, a[href]"));
@@ -55,23 +58,39 @@ function markGeneratedAssetLinkInReading(el: HTMLElement, assetPath: string): vo
     const href = decodeURIComponent(link.getAttribute("href") ?? "").replace(/\\/gu, "/");
     return href === normalizedPath || href.endsWith(`/${normalizedPath}`);
   });
-  if (!generated) return;
-  // Mark only the actual generated wikilink. Never mark its paragraph/div wrapper,
-  // otherwise Reading-view CSS can accidentally hide the TikZ figure itself.
-  generated.classList.add(GENERATED_ASSET_CLASS);
+  if (generated) generated.classList.add(GENERATED_ASSET_CLASS);
+
+  const editLink = links.find((link) => link.classList.contains(GENERATED_EDIT_CLASS) || link.getAttribute("data-tikz-edit") === historyKey);
+  if (editLink) return;
+  const candidates = links.filter((link) => link.getAttribute("href") === `#tikz-edit:${historyKey}`);
+  const candidate = candidates[0];
+  if (!candidate) return;
+  candidate.classList.add(GENERATED_EDIT_CLASS);
+  candidate.setAttribute("data-tikz-edit", historyKey);
+  candidate.addEventListener("click", async (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    try { await edit(); } catch (error) { new Notice(error instanceof Error ? error.message : String(error), 8000); }
+  });
 }
 
-async function ensureSourceAssetLink(app: App, sourcePath: string, section: MarkdownSectionInformation, assetPath: string): Promise<void> {
+async function ensureSourceAssetLinks(app: App, sourcePath: string, section: MarkdownSectionInformation, assetPath: string): Promise<void> {
   const file = app.vault.getFileByPath(sourcePath);
   if (!(file instanceof TFile) || !assetPath) return;
   const wikilink = `[[${assetPath}]]`;
+  const historyMarker = createHash("sha256").update(`${sourcePath}:${section.lineStart}-${section.lineEnd}`).digest("hex").slice(0, 16);
+  const editLink = `[✎ Edit TikZ](#tikz-edit:${historyMarker})`;
   await app.vault.process(file, (data) => {
     const insertionOffset = findNthLineOffset(data, section.lineEnd + 1);
-    const before = data.slice(Math.max(0, insertionOffset - 600), insertionOffset);
-    const after = data.slice(insertionOffset, Math.min(data.length, insertionOffset + 600));
-    if (before.includes(wikilink) || after.startsWith(wikilink)) return data;
+    const before = data.slice(Math.max(0, insertionOffset - 800), insertionOffset);
+    const after = data.slice(insertionOffset, Math.min(data.length, insertionOffset + 800));
+    if (before.includes(wikilink) || after.startsWith(wikilink)) {
+      if (before.includes(editLink) || after.includes(editLink)) return data;
+      const eol = data.includes("\r\n") ? "\r\n" : "\n";
+      return `${data.slice(0, insertionOffset)}${editLink}${eol}${data.slice(insertionOffset)}`;
+    }
     const eol = data.includes("\r\n") ? "\r\n" : "\n";
-    return `${data.slice(0, insertionOffset)}${wikilink}${eol}${data.slice(insertionOffset)}`;
+    return `${data.slice(0, insertionOffset)}${wikilink}${eol}${editLink}${eol}${data.slice(insertionOffset)}`;
   });
 }
 
