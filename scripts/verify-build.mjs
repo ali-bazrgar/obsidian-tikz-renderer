@@ -18,6 +18,18 @@ for (const item of codeMirrorImports) {
   if (item.external) throw new Error(`CodeMirror import was incorrectly externalized: ${item.path}`);
 }
 
+const inputs = Object.keys(meta.inputs ?? {});
+for (const packageName of ["@codemirror/state", "@codemirror/view"]) {
+  const inputMatches = inputs.filter((path) => path.includes(`node_modules/${packageName}/`));
+  if (inputMatches.length === 0) throw new Error(`CodeMirror package is not present in the bundle inputs: ${packageName}`);
+
+  const roots = new Set(inputMatches.map((path) => {
+    const marker = `node_modules/${packageName}/`;
+    return path.slice(0, path.indexOf(marker) + marker.length);
+  }));
+  if (roots.size > 1) throw new Error(`Multiple bundled ${packageName} roots detected: ${[...roots].join(", ")}`);
+}
+
 const lock = JSON.parse(await readFile("package-lock.json", "utf8"));
 const packages = lock.packages ?? {};
 const expected = {
@@ -34,5 +46,5 @@ for (const [packageName, expectedVersion] of Object.entries(expected)) {
 }
 
 console.log("Build artifacts verified.");
-console.log(`esbuild bundled inputs: ${Object.keys(meta.inputs ?? {}).length}`);
-console.log("CodeMirror state/view are bundled and pinned to one exact locked version each.");
+console.log(`esbuild bundled inputs: ${inputs.length}`);
+console.log("CodeMirror state/view are bundled, single-root, and pinned to one exact locked version each.");
