@@ -1,4 +1,4 @@
-import { App, Modal, Notice } from "obsidian";
+import { App, MarkdownRenderChild, Modal, Notice } from "obsidian";
 import { RenderResult } from "../core/types";
 import { RenderService } from "../core/render-service";
 import { ExportService } from "../core/export-service";
@@ -8,12 +8,12 @@ import { DisplayTheme, TikzSettings } from "../settings/settings";
 /**
  * Reading-mode TikZ UI.
  *
- * The figure lives in the Markdown processor host. The menu and controls are
- * intentionally portalled to document.body so they are never clipped by the
- * figure. A renderer owns every listener/observer it creates and disposes all
- * of them before the host is replaced or the plugin unloads.
+ * This renderer is a MarkdownRenderChild so Obsidian owns its lifecycle. The
+ * controls are kept inside the renderer's own DOM subtree; nothing is
+ * portalled to document.body. This prevents orphaned controls when notes are
+ * switched or a preview section is replaced.
  */
-export class TikzRendererView {
+export class TikzRendererView extends MarkdownRenderChild {
   private cleanup: (() => void) | undefined;
   private static readonly activeViews = new Map<string, TikzRendererView>();
   private static readonly allViews = new Set<TikzRendererView>();
@@ -21,7 +21,7 @@ export class TikzRendererView {
   constructor(
     private readonly app: App,
     private readonly exportService: ExportService,
-    private readonly host: HTMLElement,
+    host: HTMLElement,
     private readonly result: RenderResult,
     private readonly source: string,
     private readonly sourcePath: string,
@@ -32,46 +32,44 @@ export class TikzRendererView {
     private readonly editSource: (source: string) => Promise<void>,
     private readonly getSettings: () => TikzSettings,
     private readonly saveSettings: (settings: TikzSettings) => Promise<void>,
-  ) {}
+  ) {
+    super(host);
+  }
 
   render(): void {
-    // A processor may create a new host for the same logical block. Dispose the
-    // old instance BEFORE installing this one. The previous implementation
-    // registered `this` and then immediately called this.dispose(), which left
-    // the new registry entry alive without a cleanup callback and was the root
-    // cause of orphaned controls accumulating at the top-left of Obsidian.
     const previous = TikzRendererView.activeViews.get(this.historyKey);
     if (previous && previous !== this) previous.dispose();
 
-    // Re-rendering the same instance must remove only its old DOM/listeners.
     this.cleanup?.();
     this.cleanup = undefined;
 
     TikzRendererView.activeViews.set(this.historyKey, this);
     TikzRendererView.allViews.add(this);
-    this.host.empty();
+    this.containerEl.empty();
 
-    const documentRef = this.host.ownerDocument;
+    const documentRef = this.containerEl.ownerDocument;
     const windowRef = documentRef.defaultView;
 
-    const shell = this.host.createDiv({ cls: "tikz-renderer-shell" });
+    const shell = this.containerEl.createDiv({ cls: "tikz-renderer-shell" });
     const paper = shell.createDiv({ cls: "tikz-renderer-paper" });
     const viewport = paper.createDiv({ cls: "tikz-renderer-viewport" });
-    const assetLink = viewport.createEl("a", {
-      cls: "tikz-renderer-asset-link",
-      attr: { href: "#", "aria-label": "Open TikZ SVG asset", title: "Open rendered SVG" },
-    });
-    const img = assetLink.createEl("img", {
-      cls: "tikz-renderer-svg",
-      attr: { alt: "TikZ diagram", draggable: "false" },
-    });
-    img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(this.result.svg)}`;
 
-    // These two elements are deliberately siblings of the Markdown document,
-    // not children of the figure. This makes their geometry independent from
-    // SVG size and from the figure's overflow/layout.
-    const body = documentRef.body;
-    const controls = body.createDiv({ cls: "tikz-renderer-controls" });
+    // Keep the actual SVG as an inline SVG element. An <img> with an SVG data
+    // URL is vector too, but inline SVG gives Obsidian a real SVG DOM object
+    // and prevents raster-style/theme-opacity behaviour.
+    const svgDocument = new DOMParser().parseFromString(this.result.svg, "image/svg+xml");
+    const parserError = svgDocument.querySelector("parsererror");
+    if (parserError || svgDocument.documentElement.tagName.toLowerCase() !== "svg") {
+      throw new Error("The TeX renderer produced invalid SVG output.");
+    }
+    const svg = documentRef.importNode(svgDocument.documentElement, true) as SVGSVGElement;
+    svg.classList.add("tikz-renderer-svg");
+    svg.setAttribute("aria-label", "TikZ diagram");
+    svg.setAttribute("role", "img");
+    svg.setAttribute("draggable", "false");
+    viewport.appendChild(svg);
+
+    const controls = shell.createDiv({ cls: "tikz-renderer-controls" });
     const menu = controls.createEl("button", {
       cls: "tikz-renderer-menu",
       attr: {
@@ -83,7 +81,7 @@ export class TikzRendererView {
     });
     menu.textContent = "⋯";
 
-    const panel = body.createDiv({ cls: "tikz-renderer-panel" });
+    const panel = shell.createDiv({ cls: "tikz-renderer-panel" });
     panel.hidden = true;
     panel.setAttribute("role", "menu");
 
@@ -102,6 +100,31 @@ export class TikzRendererView {
       menu.removeAttribute("data-open");
     };
 
+    const positionPanel = (): void => {
+      if (panel.hidden || controls.hidden || !shell.isConnected) return;
+      const buttonRect = menu.getBoundingClientRect();
+      const shellRect = shell.getBoundingClientRect();
+      const panelRect = panel.getBoundingClientRect();
+      const viewportWidth = windowRef?.innerWidth ?? documentRef.documentElement.clientWidth;
+      const viewportHeight = windowRef?.innerHeight ?? documentRef.documentElement.clientHeight;
+      const gap = 6;
+      const width = Math.min(panelRect.width || 240, Math.max(180, viewportWidth - 16));
+      const height = Math.min(panelRect.height || 240, Math.max(120, viewportHeight - 16));
+
+      // Position relative to the shell. The panel stays attached to the
+      // figure instead of becoming a global fixed element at (0, 0).
+      let left = buttonRect.right - shellRect.left + gap;
+      if (left + width > shellRect.width) left = buttonRect.left - shellRect.left - width - gap;
+      left = Math.max(4, Math.min(left, Math.max(4, shellRect.width - width - 4)));
+
+      let top = buttonRect.top - shellRect.top;
+      if (top + height > shellRect.height) top = shellRect.height - height - 4;
+      top = Math.max(4, top);
+
+      panel.style.left = `${Math.round(left)}px`;
+      panel.style.top = `${Math.round(top)}px`;
+    };
+
     const positionControls = (): void => {
       if (!shell.isConnected) {
         controls.hidden = true;
@@ -109,42 +132,12 @@ export class TikzRendererView {
         return;
       }
       const rect = shell.getBoundingClientRect();
-      const viewportWidth = windowRef?.innerWidth ?? documentRef.documentElement.clientWidth;
       const viewportHeight = windowRef?.innerHeight ?? documentRef.documentElement.clientHeight;
+      const viewportWidth = windowRef?.innerWidth ?? documentRef.documentElement.clientWidth;
       const visible = rect.width > 0 && rect.height > 0 && rect.bottom > 0 && rect.top < viewportHeight && rect.right > 0 && rect.left < viewportWidth;
       controls.hidden = !visible;
-      if (!visible) {
-        closePanel();
-        return;
-      }
-
-      // Keep the compact button immediately to the left of the figure. If the
-      // figure touches the viewport edge, keep the button inside the viewport.
-      const left = Math.max(4, Math.min(rect.left - 22, viewportWidth - 22));
-      controls.style.left = `${Math.round(left)}px`;
-      controls.style.top = `${Math.round(Math.max(4, rect.top))}px`;
-    };
-
-    const positionPanel = (): void => {
-      if (panel.hidden || controls.hidden || !shell.isConnected) return;
-      const buttonRect = menu.getBoundingClientRect();
-      const viewportWidth = windowRef?.innerWidth ?? documentRef.documentElement.clientWidth;
-      const viewportHeight = windowRef?.innerHeight ?? documentRef.documentElement.clientHeight;
-      const panelRect = panel.getBoundingClientRect();
-      const gap = 7;
-      const width = Math.min(panelRect.width || 240, viewportWidth - 16);
-      const height = Math.min(panelRect.height || 240, viewportHeight - 16);
-
-      let left = buttonRect.right + gap;
-      if (left + width > viewportWidth - 8) left = buttonRect.left - width - gap;
-      left = Math.max(8, Math.min(left, viewportWidth - width - 8));
-
-      let top = buttonRect.top;
-      if (top + height > viewportHeight - 8) top = viewportHeight - height - 8;
-      top = Math.max(8, top);
-
-      panel.style.left = `${Math.round(left)}px`;
-      panel.style.top = `${Math.round(top)}px`;
+      if (!visible) closePanel();
+      positionPanel();
     };
 
     const applyTheme = (): void => {
@@ -162,14 +155,14 @@ export class TikzRendererView {
 
     const applyZoom = (): void => {
       if (naturalWidth > 0 && naturalHeight > 0) {
-        // Real layout dimensions, not transform:scale(). The surrounding paper
-        // therefore follows the actual zoomed figure size.
-        img.style.width = `${naturalWidth * zoom}px`;
-        img.style.height = `${naturalHeight * zoom}px`;
-        img.style.maxWidth = "none";
+        // Real SVG layout dimensions, not transform:scale(). The surrounding
+        // paper therefore follows the actual zoomed figure size.
+        svg.style.width = `${naturalWidth * zoom}px`;
+        svg.style.height = `${naturalHeight * zoom}px`;
+        svg.style.maxWidth = "none";
       }
-      img.style.transform = `translate3d(${panX}px, ${panY}px, 0)`;
-      img.dataset.zoom = `${Math.round(zoom * 100)}%`;
+      svg.style.transform = `translate3d(${panX}px, ${panY}px, 0)`;
+      svg.dataset.zoom = `${Math.round(zoom * 100)}%`;
       viewport.classList.toggle("is-pannable", zoom > 1);
       viewport.classList.toggle("is-dragging", dragging);
       viewport.style.touchAction = zoom > 1 ? "none" : "pan-y";
@@ -187,7 +180,7 @@ export class TikzRendererView {
 
     const fit = (): void => {
       if (!naturalWidth) return;
-      const availableWidth = Math.max(1, this.host.clientWidth);
+      const availableWidth = Math.max(1, this.containerEl.clientWidth);
       zoom = clampZoom(Math.min(1, availableWidth / naturalWidth));
       panX = 0;
       panY = 0;
@@ -209,16 +202,22 @@ export class TikzRendererView {
       else closePanel();
     });
 
-    // Capture-phase pointerdown closes the panel before Obsidian's own editor
-    // handlers run. Clicking the button/panel itself is explicitly excluded.
     const outsidePointerDown = (event: PointerEvent): void => {
       if (panel.hidden) return;
       const target = event.target;
       if (!(target instanceof Node)) return;
-      if (controls.contains(target) || panel.contains(target)) return;
+      if (shell.contains(target)) return;
       closePanel();
     };
     documentRef.addEventListener("pointerdown", outsidePointerDown, true);
+
+    const escape = (event: KeyboardEvent): void => {
+      if (event.key === "Escape" && !panel.hidden) {
+        closePanel();
+        menu.focus();
+      }
+    };
+    documentRef.addEventListener("keydown", escape, true);
 
     const addButton = (label: string, action: () => void | Promise<void>): void => {
       const button = panel.createEl("button", { text: label, attr: { type: "button", role: "menuitem" } });
@@ -335,7 +334,7 @@ export class TikzRendererView {
 
     buildMainPanel();
 
-    assetLink.addEventListener("click", (event) => {
+    svg.addEventListener("click", (event) => {
       if (dragging) {
         event.preventDefault();
         return;
@@ -360,7 +359,7 @@ export class TikzRendererView {
       panY += event.clientY - lastY;
       lastX = event.clientX;
       lastY = event.clientY;
-      img.style.transform = `translate3d(${panX}px, ${panY}px, 0)`;
+      svg.style.transform = `translate3d(${panX}px, ${panY}px, 0)`;
       event.preventDefault();
     });
     const stopDragging = (): void => {
@@ -371,9 +370,6 @@ export class TikzRendererView {
     viewport.addEventListener("pointercancel", stopDragging);
     viewport.addEventListener("lostpointercapture", stopDragging);
 
-    // Normal wheel belongs to Obsidian. Only Ctrl/Cmd + wheel belongs to the
-    // TikZ figure. The handler is passive:false and capture-phase so browser
-    // zoom/Obsidian scrolling cannot race the figure zoom operation.
     const wheel = (event: WheelEvent): void => {
       if (!event.ctrlKey && !event.metaKey) return;
       if (!naturalWidth || !naturalHeight) return;
@@ -396,22 +392,20 @@ export class TikzRendererView {
     viewport.addEventListener("wheel", wheel, { passive: false, capture: true });
 
     const initializeIntrinsicSize = (): void => {
-      naturalWidth = img.naturalWidth;
-      naturalHeight = img.naturalHeight;
+      const rect = svg.getBoundingClientRect();
+      naturalWidth = rect.width;
+      naturalHeight = rect.height;
       if (!naturalWidth || !naturalHeight) return;
       applyZoom();
     };
-    img.addEventListener("load", initializeIntrinsicSize, { once: true });
-    if (img.complete) initializeIntrinsicSize();
+    requestAnimationFrame(initializeIntrinsicSize);
 
-    // Theme changes should affect presentation only. Observe the body class,
-    // but never rewrite the SVG source or SVG markup.
     const observer = new MutationObserver(() => {
       applyTheme();
       positionControls();
       positionPanel();
     });
-    observer.observe(body, { attributes: true, attributeFilter: ["class"] });
+    observer.observe(documentRef.body, { attributes: true, attributeFilter: ["class"] });
 
     const resizeObserver = new ResizeObserver(() => {
       positionControls();
@@ -431,24 +425,28 @@ export class TikzRendererView {
 
     this.cleanup = () => {
       documentRef.removeEventListener("pointerdown", outsidePointerDown, true);
+      documentRef.removeEventListener("keydown", escape, true);
       windowRef?.removeEventListener("scroll", reposition, true);
       windowRef?.removeEventListener("resize", reposition);
       observer.disconnect();
       resizeObserver.disconnect();
-      controls.remove();
-      panel.remove();
       if (TikzRendererView.activeViews.get(this.historyKey) === this) TikzRendererView.activeViews.delete(this.historyKey);
       TikzRendererView.allViews.delete(this);
       this.cleanup = undefined;
     };
   }
 
-  dispose(): void {
+  onunload(): void {
     this.cleanup?.();
+    this.containerEl.empty();
+  }
+
+  dispose(): void {
+    this.unload();
   }
 
   static disposeAll(): void {
-    for (const view of Array.from(TikzRendererView.allViews)) view.dispose();
+    for (const view of Array.from(TikzRendererView.allViews)) view.unload();
     TikzRendererView.activeViews.clear();
     TikzRendererView.allViews.clear();
   }
@@ -483,7 +481,7 @@ export class TikzRendererView {
   }
 
   private detectTheme(): string {
-    const classes = this.host.ownerDocument.body.classList;
+    const classes = this.containerEl.ownerDocument.body.classList;
     if (classes.contains("theme-dark")) return "dark";
     if (classes.contains("theme-light")) return "light";
     return "obsidian";
