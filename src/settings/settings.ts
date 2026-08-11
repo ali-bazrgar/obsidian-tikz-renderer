@@ -10,6 +10,7 @@ export interface TikzSettings {
   dvilualatexPath: string;
   dvisvgmPath: string;
   mutoolPath: string;
+  texLiveRoot: string;
   assetFolder: string;
   cacheFolder: string;
   displayTheme: DisplayTheme;
@@ -55,6 +56,7 @@ export const DEFAULT_SETTINGS: TikzSettings = {
   dvilualatexPath: "dvilualatex",
   dvisvgmPath: "dvisvgm",
   mutoolPath: "mutool",
+  texLiveRoot: "",
   assetFolder: "TikZ Assets",
   cacheFolder: ".tikz-cache",
   displayTheme: "auto",
