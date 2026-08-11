@@ -170,7 +170,8 @@ function hasMissingDependencyDiagnostic(log: string): boolean {
   return /(?:LaTeX|Package|! LaTeX|! Package).*?(?:File .*? not found|file .*? not found)/isu.test(log)
     || /(?:File|file) [`'][^`']+\.(?:sty|cls|def|fd|code\.tex)[`']\s+not found/iu.test(log)
     || /(?:tikzlibrary[^\s`']+\.code\.tex).*?not found/iu.test(log)
-    || /I can't find file/iu.test(log);
+    || /I can't find file/iu.test(log)
+    || /Environment\s+[A-Za-z][A-Za-z0-9*_-]*\s+undefined/iu.test(log);
 }
 
 function appendLine(preamble: string, line: string): string { return `${preamble.trimEnd()}\n${line}\n`; }
