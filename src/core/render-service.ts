@@ -1,102 +1,104 @@
-import { App, normalizePath } from "obsidian";
-import { createHash, randomBytes } from "node:crypto";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+import { App, FileSystemAdapter, normalizePath } from "obsidian";
+import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
-import { BlockKind, Engine, InstallationResult, RenderResult } from "./types";
-import { TikzSettings } from "../settings/settings";
-import { ConcurrencyLimiter } from "./concurrency";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { Engine, TikzSettings } from "../settings/settings";
+import { BlockKind, EnginePlan, RenderResult } from "./types";
+import { ConcurrencyLimiter } from "./concurrency-limiter";
+import { probeAllExecutables, TeXExecutableName, texLiveExecutableCandidates } from "./executable-detector";
 
 const execFileAsync = promisify(execFile);
-const PIPELINE_VERSION = "5";
+const PIPELINE_VERSION = "6";
 const MAX_OUTPUT = 4 * 1024 * 1024;
 
 export class RenderError extends Error {
-  constructor(message: string, readonly details = "") { super(message); this.name = "RenderError"; }
+  constructor(message: string, readonly details?: string) { super(message); this.name = "RenderError"; }
 }
 
-interface EnginePlan { engine: Exclude<Engine, "auto">; executable: string; outputType: "pdf" | "dvi"; }
-
 export class RenderService {
-  private readonly inflight = new Map<string, Promise<RenderResult>>();
+  private readonly inFlight = new Map<string, Promise<RenderResult>>();
   private readonly limiter = new ConcurrencyLimiter(2);
-  private disposed = false;
 
   constructor(private readonly app: App, private readonly getSettings: () => TikzSettings) {}
-  dispose(): void { this.disposed = true; this.inflight.clear(); }
+  dispose(): void { this.inFlight.clear(); }
 
   async render(source: string, kind: BlockKind): Promise<RenderResult> {
-    if (this.disposed) throw new RenderError("Renderer is shutting down.");
     const settings = this.getSettings();
     const plan = this.selectEngine(source, settings);
     const hash = this.hash(source, kind, plan, settings);
-    const pending = this.inflight.get(hash);
-    if (pending) return pending;
-    const task = this.limiter.run(() => this.renderInternal(source, kind, plan, hash, settings));
-    this.inflight.set(hash, task);
-    try { return await task; } finally { this.inflight.delete(hash); }
+    const existing = this.inFlight.get(hash);
+    if (existing) return existing;
+    const task = this.limiter.run(() => this.renderUnique(source, kind, plan, hash, settings));
+    this.inFlight.set(hash, task);
+    try { return await task; } finally { this.inFlight.delete(hash); }
   }
 
   async clearCache(): Promise<void> { await fs.rm(this.cacheRoot(), { recursive: true, force: true }); }
 
+  async testInstallation(): Promise<{ summary: string; results: Awaited<ReturnType<typeof probeAllExecutables>> }> {
+    const settings = this.getSettings();
+    const results = await probeAllExecutables({
+      latex: settings.latexPath, pdflatex: settings.pdflatexPath, xelatex: settings.xelatexPath,
+      lualatex: settings.lualatexPath, dvilualatex: settings.dvilualatexPath,
+      dvisvgm: settings.dvisvgmPath, mutool: settings.mutoolPath,
+    });
+    return { summary: results.map((x) => `${x.name}: ${x.ok ? "OK" : "FAILED"}`).join("\n"), results };
+  }
+
   async detectExecutables(): Promise<Partial<TikzSettings>> {
     const settings = this.getSettings();
-    const pairs: Array<[keyof TikzSettings, string]> = [
-      ["latexPath", "latex"], ["pdflatexPath", "pdflatex"], ["xelatexPath", "xelatex"],
-      ["lualatexPath", "lualatex"], ["dvilualatexPath", "dvilualatex"], ["dvisvgmPath", "dvisvgm"], ["mutoolPath", "mutool"],
-    ];
-    const out: Partial<TikzSettings> = {};
-    for (const [key, fallback] of pairs) {
-      const current = String(settings[key]);
-      if (await this.commandWorks(current)) (out as Record<string, string>)[key] = current;
-      else if (await this.commandWorks(fallback)) (out as Record<string, string>)[key] = fallback;
+    const fromRoot = texLiveExecutableCandidates(settings.texLiveRoot);
+    const configured = {
+      latex: fromRoot.latex ?? settings.latexPath, pdflatex: fromRoot.pdflatex ?? settings.pdflatexPath,
+      xelatex: fromRoot.xelatex ?? settings.xelatexPath, lualatex: fromRoot.lualatex ?? settings.lualatexPath,
+      dvilualatex: fromRoot.dvilualatex ?? settings.dvilualatexPath, dvisvgm: fromRoot.dvisvgm ?? settings.dvisvgmPath,
+      mutool: fromRoot.mutool ?? settings.mutoolPath,
+    } satisfies Partial<Record<TeXExecutableName, string>>;
+    const results = await probeAllExecutables(configured);
+    const output: Partial<TikzSettings> = {};
+    for (const result of results) {
+      if (!result.ok) continue;
+      (output as Record<string, unknown>)[`${result.name}Path`] = result.configuredPath;
     }
-    return out;
+    return output;
   }
 
-  async testInstallation(): Promise<InstallationResult> {
-    const s = this.getSettings();
-    const pairs: Array<[string, string]> = [
-      ["latex", s.latexPath], ["pdflatex", s.pdflatexPath], ["xelatex", s.xelatexPath], ["lualatex", s.lualatexPath],
-      ["dvilualatex", s.dvilualatexPath], ["dvisvgm", s.dvisvgmPath], ["mutool", s.mutoolPath],
-    ];
-    const results: Record<string, boolean> = {};
-    for (const [name, executable] of pairs) results[name] = await this.commandWorks(executable);
-    return { results, summary: pairs.map(([name]) => `${name}: ${results[name] ? "OK" : "FAILED"}`).join("\n") };
-  }
-
-  private async renderInternal(source: string, kind: BlockKind, plan: EnginePlan, hash: string, settings: TikzSettings): Promise<RenderResult> {
+  private async renderUnique(source: string, kind: BlockKind, plan: EnginePlan, hash: string, settings: TikzSettings): Promise<RenderResult> {
     const cache = this.cacheRoot();
-    const svgPath = path.join(cache, `${hash}.svg`);
-    try { return { svg: await fs.readFile(svgPath, "utf8"), hash, engine: plan.engine, fromCache: true, source, kind }; } catch { /* miss */ }
-    await fs.mkdir(cache, { recursive: true });
-    const work = path.join(cache, `work-${hash}-${randomBytes(6).toString("hex")}`);
+    const cached = path.join(cache, `${hash}.svg`);
+    if (await this.exists(cached)) return { hash, svg: await fs.readFile(cached, "utf8"), engine: plan.engine, cached: true };
+    const work = path.join(cache, `work-${hash}-${Math.random().toString(36).slice(2, 10)}`);
     await fs.mkdir(work, { recursive: true });
-    const texPath = path.join(work, "main.tex");
-    await fs.writeFile(texPath, this.buildDocument(source, settings), "utf8");
     try {
-      await this.run(plan.executable, this.compilerArgs(texPath, work), work, settings.compileTimeout);
-      const input = path.join(work, plan.outputType === "dvi" ? "main.dvi" : "main.pdf");
-      const output = path.join(work, "main.svg");
-      const args = [input, "-n", "-o", output];
-      if (plan.outputType === "pdf") args.unshift("--pdf");
-      await this.run(settings.dvisvgmPath, args, work, settings.compileTimeout);
-      const svg = sanitizeSvg(await fs.readFile(output, "utf8"));
-      await fs.writeFile(svgPath, svg, "utf8");
-      return { svg, hash, engine: plan.engine, fromCache: false, source, kind };
+      await fs.mkdir(cache, { recursive: true });
+      await fs.writeFile(path.join(work, "main.tex"), this.buildDocument(source, settings), "utf8");
+      await this.run(plan.executable, this.compilerArgs("main.tex", work), work, settings.compileTimeout);
+      const input = plan.outputType === "dvi" ? path.join(work, "main.dvi") : path.join(work, "main.pdf");
+      if (!await this.exists(input)) throw new RenderError(`TeX compiler completed without producing ${path.basename(input)}.`);
+      const svg = await this.convertToSvg(input, plan.outputType, work, settings);
+      await fs.writeFile(cached, svg, "utf8");
+      return { hash, svg, engine: plan.engine, cached: false };
     } catch (error) {
-      const log = await this.readLog(work);
-      console.error("[TikZ Renderer] rendering failed", { error, hash, plan, work, log });
-      throw this.normalizeError(error, log);
+      throw this.normalizeError(error, await this.readLog(work));
     } finally {
-      if (!settings.keepTexSource) await fs.rm(work, { recursive: true, force: true }).catch((error: unknown) => console.warn("[TikZ Renderer] temp cleanup failed", error));
+      if (!settings.keepTexSource) await fs.rm(work, { recursive: true, force: true }).catch(() => undefined);
     }
+  }
+
+  private async convertToSvg(input: string, outputType: EnginePlan["outputType"], work: string, settings: TikzSettings): Promise<string> {
+    const output = path.join(work, "main.svg");
+    const args = outputType === "pdf" ? ["--pdf", input, "-n", "-o", output] : [input, "-n", "-o", output];
+    await this.run(settings.dvisvgmPath, args, work, settings.compileTimeout);
+    if (!await this.exists(output)) throw new RenderError("dvisvgm completed without producing an SVG file.");
+    return sanitizeSvg(await fs.readFile(output, "utf8"));
   }
 
   private buildDocument(source: string, settings: TikzSettings): string {
     const needsXe = /[\u0600-\u06ff]/u.test(source) || /\\usepackage\s*\{\s*(?:xepersian|fontspec)\s*\}/u.test(source);
-    const language = needsXe ? `\\usepackage{xepersian}\n\\settextfont{${escapeTex(settings.persianFont)}}\n` : "";
+    const language = needsXe && !/\\usepackage\s*\{\s*xepersian\s*\}/u.test(settings.preamble)
+      ? `\\usepackage{xepersian}\n\\settextfont{${escapeTex(settings.persianFont)}}\n` : "";
     const body = source.trim();
     if (/^\\documentclass\b/u.test(body) && /\\begin\{document\}/u.test(body)) return body.endsWith("\n") ? body : `${body}\n`;
     const hasPictureEnvironment = /\\begin\{(?:tikzpicture|circuitikz|pgfonlayer|axis)\}/u.test(body);
@@ -122,11 +124,13 @@ export class RenderService {
   private hash(source: string, kind: BlockKind, plan: EnginePlan, settings: TikzSettings): string {
     return createHash("sha256").update(JSON.stringify({ source, kind, engine: plan.engine, executable: plan.executable, outputType: plan.outputType, preamble: settings.preamble, font: settings.persianFont, dvisvgm: settings.dvisvgmPath, pipeline: PIPELINE_VERSION })).digest("hex");
   }
-  private cacheRoot(): string { return path.join(this.app.vault.adapter.getBasePath(), normalizePath(this.getSettings().cacheFolder)); }
-  private async commandWorks(executable: string): Promise<boolean> {
-    if (!executable.trim()) return false;
-    try { await execFileAsync(executable, ["--version"], { timeout: 5000, windowsHide: true, maxBuffer: 1024 * 1024 }); return true; } catch { return false; }
+
+  private cacheRoot(): string {
+    const adapter = this.app.vault.adapter;
+    if (!(adapter instanceof FileSystemAdapter)) throw new RenderError("TikZ Renderer requires Obsidian Desktop with a filesystem-backed vault.");
+    return path.join(adapter.getBasePath(), normalizePath(this.getSettings().cacheFolder));
   }
+
   private async run(executable: string, args: string[], cwd: string, timeout: number): Promise<void> {
     try { await execFileAsync(executable, args, { cwd, timeout, windowsHide: true, maxBuffer: MAX_OUTPUT }); }
     catch (error) {
@@ -137,6 +141,8 @@ export class RenderService {
       throw new RenderError(`Process failed: ${executable}`, [x.stderr, x.stdout, x.message].filter(Boolean).join("\n"));
     }
   }
+
+  private async exists(file: string): Promise<boolean> { return fs.stat(file).then((s) => s.isFile()).catch(() => false); }
   private async readLog(work: string): Promise<string> { try { return await fs.readFile(path.join(work, "main.log"), "utf8"); } catch { return "No TeX log was produced."; } }
   private normalizeError(error: unknown, log: string): RenderError {
     const base = error instanceof RenderError ? error : new RenderError("TeX/TikZ rendering failed", String(error));
