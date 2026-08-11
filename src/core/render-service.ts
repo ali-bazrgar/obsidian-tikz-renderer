@@ -12,7 +12,7 @@ import { augmentPreamble } from "./tex-package-detector";
 import { TeXDependencyResolver } from "./tex-dependency-resolver";
 
 const execFileAsync = promisify(execFile);
-const PIPELINE_VERSION = "17-texlive-resolver-dvi-svg-hardened";
+const PIPELINE_VERSION = "18-tex-error-diagnostics";
 const MAX_OUTPUT = 4 * 1024 * 1024;
 const MAX_DEPENDENCY_RETRIES = 3;
 
@@ -104,7 +104,6 @@ export class RenderService {
 
   private async convertToSvg(input: string, outputType: EnginePlan["outputType"], work: string, settings: TikzSettings): Promise<string> {
     const output = path.join(work, "main.svg");
-
     if (outputType === "pdf") {
       const mutool = settings.mutoolPath.trim() || "mutool";
       const result = await this.runCapture(mutool, ["draw", "-q", "-F", "svg", "-o", "-", input, "1"], work, settings.compileTimeout);
@@ -113,9 +112,7 @@ export class RenderService {
         const svgStart = stdout.search(/<svg\b/i);
         await fs.writeFile(output, stdout.slice(svgStart), "utf8");
       }
-      if (!await this.exists(output)) {
-        await this.run(mutool, ["draw", "-q", "-F", "svg", "-o", output, input, "1"], work, settings.compileTimeout);
-      }
+      if (!await this.exists(output)) await this.run(mutool, ["draw", "-q", "-F", "svg", "-o", output, input, "1"], work, settings.compileTimeout);
       if (!await this.exists(output)) {
         const numbered = path.join(work, "main-1.svg");
         if (await this.exists(numbered)) await fs.rename(numbered, output);
@@ -123,34 +120,13 @@ export class RenderService {
     } else {
       const dvisvgm = settings.dvisvgmPath.trim() || "dvisvgm";
       let dvisvgmError: unknown = undefined;
-
       try {
-        // --exact-bbox prevents clipping of glyphs whose real outlines exceed
-        // their TFM dimensions. --no-fonts makes the SVG browser-compatible by
-        // converting TeX glyphs to ordinary SVG paths.
         await this.run(dvisvgm, ["--exact-bbox", "--no-fonts", "--verbosity=0", input, "-o", output], work, settings.compileTimeout);
-      } catch (error) {
-        dvisvgmError = error;
-      }
-
-      // dvisvgm normally writes main.svg for a one-page DVI, but some builds
-      // choose a numbered filename. Normalize that result before declaring
-      // failure.
+      } catch (error) { dvisvgmError = error; }
       if (!await this.exists(output)) {
-        const candidates = [
-          path.join(work, "main-1.svg"),
-          path.join(work, "main-01.svg"),
-        ];
-        for (const candidate of candidates) {
-          if (await this.exists(candidate)) {
-            await fs.rename(candidate, output);
-            break;
-          }
-        }
+        const candidates = [path.join(work, "main-1.svg"), path.join(work, "main-01.svg")];
+        for (const candidate of candidates) if (await this.exists(candidate)) { await fs.rename(candidate, output); break; }
       }
-
-      // Last-resort DVI -> PDF -> SVG fallback. This keeps the DVI engine
-      // usable even when a particular dvisvgm build cannot process a special.
       if (!await this.exists(output)) {
         const dvipdfmx = resolveSiblingExecutable(settings.latexPath, "dvipdfmx");
         const pdf = path.join(work, "main-from-dvi.pdf");
@@ -175,7 +151,6 @@ export class RenderService {
         }
       }
     }
-
     if (!await this.exists(output)) {
       const files = await fs.readdir(work).catch(() => []);
       throw new RenderError(`The vector converter completed without producing an SVG file. Files in work directory: ${files.join(", ")}`);
@@ -221,8 +196,12 @@ export class RenderService {
   private async readLog(work: string): Promise<string> { try { return await fs.readFile(path.join(work, "main.log"), "utf8"); } catch { return "No TeX log was produced."; } }
   private normalizeError(error: unknown, log: string): RenderError {
     const base = error instanceof RenderError ? error : new RenderError("TeX/TikZ rendering failed", String(error));
-    const detail = log.length > 30000 ? `${log.slice(-30000)}\n[log truncated]` : log;
-    return new RenderError(`${base.message}\n\n--- TeX log ---\n${detail}`, base.details);
+    const normalized = log.replace(/\r\n/g, "\n");
+    const errorLines = normalized.split("\n").filter((line) => /(?:^|\s)!|LaTeX Error:|Package .* Error:|Emergency stop|Fatal error|Undefined control sequence|Missing \\endgroup|Runaway argument|File .* not found/i.test(line)).slice(-24);
+    const lastSection = normalized.slice(Math.max(0, normalized.length - 12000));
+    const diagnostic = errorLines.length ? `\n\n--- TeX diagnostics ---\n${errorLines.join("\n")}` : "";
+    const detail = lastSection.length > 30000 ? `${lastSection.slice(-30000)}\n[log truncated]` : lastSection;
+    return new RenderError(`${base.message}${diagnostic}\n\n--- TeX log (tail) ---\n${detail}`, base.details);
   }
 }
 
