@@ -12,7 +12,7 @@ import { augmentPreamble } from "./tex-package-detector";
 import { TeXDependencyResolver } from "./tex-dependency-resolver";
 
 const execFileAsync = promisify(execFile);
-const PIPELINE_VERSION = "11-texlive-dependency-resolver";
+const PIPELINE_VERSION = "12-texlive-dependency-resolver-and-wrapper-fix";
 const MAX_OUTPUT = 4 * 1024 * 1024;
 const MAX_DEPENDENCY_RETRIES = 6;
 
@@ -82,8 +82,7 @@ export class RenderService {
 
     try {
       const resolver = new TeXDependencyResolver(settings.texLiveRoot, plan.executable);
-      const preflight = await resolver.resolve(settings.preamble, source, effectivePreamble);
-      effectivePreamble = preflight.preamble;
+      effectivePreamble = (await resolver.resolve(settings.preamble, source, effectivePreamble)).preamble;
 
       for (let attempt = 0; attempt <= MAX_DEPENDENCY_RETRIES; attempt += 1) {
         const tex = buildDocument(source, settings, effectivePreamble);
@@ -131,12 +130,7 @@ export class RenderService {
   }
 
   private hash(source: string, kind: BlockKind, plan: EnginePlan, settings: TikzSettings): string {
-    return createHash("sha256").update(JSON.stringify({
-      source, kind, engine: plan.engine, executable: plan.executable, outputType: plan.outputType,
-      preamble: augmentPreamble(settings.preamble, source), texLiveRoot: settings.texLiveRoot,
-      font: settings.persianFont, dvisvgm: settings.dvisvgmPath, mutool: settings.mutoolPath,
-      pipeline: PIPELINE_VERSION,
-    })).digest("hex");
+    return createHash("sha256").update(JSON.stringify({ source, kind, engine: plan.engine, executable: plan.executable, outputType: plan.outputType, preamble: augmentPreamble(settings.preamble, source), font: settings.persianFont, dvisvgm: settings.dvisvgmPath, mutool: settings.mutoolPath, pipeline: PIPELINE_VERSION })).digest("hex");
   }
 
   private cacheRoot(): string {
@@ -189,7 +183,10 @@ export function buildDocument(source: string, settings: TikzSettings, preambleOv
   const needsXe = /[\u0600-\u06ff]/u.test(text) || /\\usepackage\s*\{\s*(?:xepersian|fontspec)\s*\}/u.test(text);
   const needsXepersian = needsXe && !/\\usepackage\s*\{\s*xepersian\s*\}/u.test(effectivePreamble) && /[\u0600-\u06ff]/u.test(source);
   const language = needsXepersian ? `\\usepackage{xepersian}\n\\settextfont{${escapeTex(settings.persianFont)}}\n` : "";
-  const hasPictureEnvironment = /\\begin\{(?:tikzpicture|circuitikz|pgfonlayer|axis)\}/u.test(body);
+  // axis is a pgfplots environment and must still live inside tikzpicture.
+  // circuitikz is itself a picture-like environment, while pgfonlayer is
+  // intentionally left unwrapped for compatibility with complete snippets.
+  const hasPictureEnvironment = /\\begin\{(?:tikzpicture|circuitikz|pgfonlayer)\}/u.test(body);
   const wrapper = hasPictureEnvironment ? body : `\\begin{tikzpicture}\n${body}\n\\end{tikzpicture}`;
   return `\\documentclass{${needsXe ? "article" : "standalone"}}\n${effectivePreamble}\n${language}\\begin{document}\n${wrapper}\n\\end{document}\n`;
 }
