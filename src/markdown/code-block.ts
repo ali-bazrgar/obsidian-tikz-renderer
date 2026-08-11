@@ -19,9 +19,14 @@ export class TikzMarkdownProcessor {
       const result = await service.render(source, kind);
       if (!el.isConnected) return;
       result.assetPath = await exportService.saveSvg(result.svg, result.hash, ctx.sourcePath, false);
-      new TikzRendererView(app, exportService, host, result, source, ctx.sourcePath, service, kind, history, historyKey, async (nextSource) => {
+      const view = new TikzRendererView(app, exportService, host, result, source, ctx.sourcePath, service, kind, history, historyKey, async (nextSource) => {
         await replaceSource(app, ctx, el, kind, nextSource);
-      }, getSettings, saveSettings).render();
+      }, getSettings, saveSettings);
+      // Obsidian will automatically unload this renderer when its markdown
+      // container is replaced/removed. This is the key lifecycle fix that
+      // prevents controls from leaking into other notes or the top-left.
+      ctx.addChild(view);
+      view.render();
     } catch (error) {
       if (!el.isConnected) return;
       host.empty();
