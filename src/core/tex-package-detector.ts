@@ -16,18 +16,20 @@ const PACKAGE_BY_PATTERN: Array<[RegExp, string]> = [
   [/\\smartdiagram\b/u, "smartdiagram"],
   [/\\pie\b|\\wheel\b/u, "pgf-pie"],
   [/\\gantt(?:bar|group|newline|link)\b/u, "pgfgantt"],
-  [/\\begin\{(?:circuitikz)\}/u, "circuitikz"],
+  [/\\begin\{circuitikz\}/u, "circuitikz"],
   [/\\begin\{forest\}|\\forestset\b/u, "forest"],
 ];
 
-// These patterns are intentionally conservative. The goal is to load a
-// library when source syntax strongly indicates that it is required, rather
-// than loading a large collection of libraries for every TikZ picture.
+// Conservative, source-driven TikZ library detection. Libraries are not
+// loaded globally; they are added only when the source contains syntax that
+// strongly indicates that they are needed.
 const LIBRARY_BY_PATTERN: Array<[RegExp, string]> = [
+  // Coordinate calculations such as ($(A)!0.5!(B)$), ($(A)+(1,0)$), etc.
+  [/\$\([^\n]*\)(?:\s*!\s*[^!]+!|\s*[+\-*/]\s*)/u, "calc"],
   [/\b(?:Stealth|Latex|Triangle|Computer Modern Rightarrow)\b/u, "arrows.meta"],
   [/\b(?:automata|state|accepting|initial by arrow)\b/u, "automata"],
   [/\b(?:on background layer|backgrounds)\b/u, "backgrounds"],
-  [/\b(?:start chain|continue chain|join chain|chain in)\b/u, "chains"],
+  [/\b(?:start chain|continue chain|join chain|join chain)\b/u, "chains"],
   [/\b(?:decorate|decoration=|snake|zigzag|brace)\b/u, "decorations"],
   [/\b(?:markings|mark=at position)\b/u, "decorations.markings"],
   [/\b(?:coil|random steps|pathmorphing)\b/u, "decorations.pathmorphing"],
@@ -40,8 +42,10 @@ const LIBRARY_BY_PATTERN: Array<[RegExp, string]> = [
   [/\bmatrix\s+of\b|\bmatrix\s*\[/u, "matrix"],
   [/\b(?:mindmap|concept color|concept connection)\b/u, "mindmap"],
   [/\bpattern\s*=|\bpattern color\b/u, "patterns"],
-  [/\b(?:above|below|left|right|above left|below right|above right|below left)=of\b/u, "positioning"],
-  [/\bpic\s*\[/u, "quotes"],
+  // Handles both `right=of A` and `right=12mm of A` forms.
+  [/\b(?:above|below|left|right|above left|below right|above right|below left)\s*=\s*(?:[^,\]\n]*?\s+)?of\s+/u, "positioning"],
+  // Quotes are required for pic options such as pic["$\\alpha$"]{angle}.
+  [/\bpic\s*\[[^\]]*["']|\bpic\s*\[[^\]]*\bpic text\s*=/u, "quotes"],
   [/\b(?:scope\s*\[|local bounding box)\b/u, "scopes"],
   [/\b(?:diamond|trapezium|regular polygon|ellipse)\b/u, "shapes.geometric"],
   [/\b(?:single arrow|double arrow|triangle 90|signal)\b/u, "shapes.arrows"],
@@ -51,7 +55,7 @@ const LIBRARY_BY_PATTERN: Array<[RegExp, string]> = [
   [/\b(?:spy using outlines|spy on node)\b/u, "spy"],
   [/\b(?:through=|circle through|ellipse through)\b/u, "through"],
   [/\b(?:child\s*\{|grow(?:'|=|\s+(?:right|left|up|down)))\b/isu, "trees"],
-  [/\b(?:pic\s*\[|angle radius|angle eccentricity|right angle)\b/u, "angles"],
+  [/\b(?:angle\s*=|angle radius|angle eccentricity|right angle)\b/u, "angles"],
   [/\b(?:xyz cylindrical cs:|canvas is xy plane at z|canvas cs:)\b/u, "3d"],
   [/\b(?:babel|csname)\b/u, "babel"],
 ];
