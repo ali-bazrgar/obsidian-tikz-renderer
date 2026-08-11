@@ -7,6 +7,8 @@ import { TikzHistoryStore } from "../core/history";
 import { TikzRendererView } from "../ui/renderer-view";
 import { TikzSettings } from "../settings/settings";
 
+const GENERATED_ASSET_CLASS = "tikz-generated-asset-link";
+
 export class TikzMarkdownProcessor {
   static async process(app: App, exportService: ExportService, history: TikzHistoryStore, kind: BlockKind, source: string, el: HTMLElement, ctx: MarkdownPostProcessorContext, service: RenderService, getSettings: () => TikzSettings, saveSettings: (settings: TikzSettings) => Promise<void>): Promise<void> {
     el.empty();
@@ -25,6 +27,7 @@ export class TikzMarkdownProcessor {
       }, getSettings, saveSettings);
       ctx.addChild(view);
       view.render();
+      markGeneratedAssetLinkInReading(el, result.assetPath);
     } catch (error) {
       if (!el.isConnected) return;
       host.empty();
@@ -35,14 +38,34 @@ export class TikzMarkdownProcessor {
   }
 }
 
+/**
+ * The source wikilink is a real Obsidian wikilink, so it remains available in
+ * Source and Live Preview. Reading view receives only a DOM class; the source
+ * file itself is never polluted with HTML or CSS-specific markup.
+ */
+function markGeneratedAssetLinkInReading(el: HTMLElement, assetPath: string): void {
+  if (!assetPath) return;
+  const normalizedPath = assetPath.replace(/\\/gu, "/");
+  let sibling = el.nextElementSibling as HTMLElement | null;
+  for (let index = 0; sibling && index < 3; index += 1, sibling = sibling.nextElementSibling as HTMLElement | null) {
+    const links = Array.from(sibling.querySelectorAll<HTMLAnchorElement>("a.internal-link, a[href]"));
+    const generated = links.find((link) => {
+      const href = decodeURIComponent(link.getAttribute("href") ?? "").replace(/\\/gu, "/");
+      return href === normalizedPath || href.endsWith(`/${normalizedPath}`);
+    });
+    if (!generated) continue;
+    sibling.classList.add(GENERATED_ASSET_CLASS);
+    generated.classList.add(GENERATED_ASSET_CLASS);
+    return;
+  }
+}
+
 /** Add the real Obsidian wikilink immediately after the complete TikZ fence. */
 async function ensureSourceAssetLink(app: App, sourcePath: string, section: MarkdownSectionInformation, assetPath: string): Promise<void> {
   const file = app.vault.getFileByPath(sourcePath);
   if (!(file instanceof TFile) || !assetPath) return;
   const wikilink = `[[${assetPath}]]`;
   await app.vault.process(file, (data) => {
-    // lineEnd is the last line of the rendered section; inserting at the next
-    // line keeps the wikilink outside the closing ``` fence.
     const insertionOffset = findNthLineOffset(data, section.lineEnd + 1);
     const before = data.slice(Math.max(0, insertionOffset - 600), insertionOffset);
     const after = data.slice(insertionOffset, Math.min(data.length, insertionOffset + 600));
