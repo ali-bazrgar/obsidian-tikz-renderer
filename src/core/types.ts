@@ -5,7 +5,7 @@ export type BlockKind = "tikz" | "pgfplots" | "circuitikz" | "tex" | "latex";
 export interface EnginePlan {
   engine: Exclude<Engine, "auto">;
   executable: string;
-  outputType: "pdf" | "dvi";
+  outputType: "pdf" | "dvi" | "xdv";
 }
 
 export interface RenderResult {
