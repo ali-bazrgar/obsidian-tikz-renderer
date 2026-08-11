@@ -81,27 +81,35 @@ async function ensureSourceAssetLinks(app: App, sourcePath: string, section: Mar
   const file = app.vault.getFileByPath(sourcePath);
   if (!(file instanceof TFile) || !assetPath) return;
   const wikilink = `[[${assetPath}]]`;
-  const editLink = `[✎ Edit TikZ](#tikz-edit:${historyKey})`;
+  const generatedEditMarker = `#tikz-edit:${historyKey}`;
   await app.vault.process(file, data => {
     const eol = data.includes("\r\n") ? "\r\n" : "\n";
     const lines = data.split(/\r?\n/u);
-    const generatedEditMarker = `#tikz-edit:${historyKey}`;
-    // Remove every generated line for this exact TikZ block before inserting the
-    // canonical pair. This makes rerenders/reloads idempotent even when Obsidian
-    // changes section.lineEnd after the generated lines have been inserted.
+    // The old generated "✎ Edit TikZ" line is now redundant because the
+    // renderer's own controls provide source editing. Remove any legacy line
+    // for this exact block, but never remove a user-authored link with another
+    // target/key.
     for (let index = lines.length - 1; index >= 0; index -= 1) {
       const trimmed = lines[index].trim();
-      if (trimmed === wikilink || trimmed === editLink || trimmed.includes(generatedEditMarker)) lines.splice(index, 1);
+      if (trimmed.includes(generatedEditMarker)) lines.splice(index, 1);
+      else if (trimmed === wikilink) lines.splice(index, 1);
     }
     const insertionOffset = findNthLineOffset(data, section.lineEnd + 1);
     const insertionLine = Math.min(lineIndexAtOffset(data, insertionOffset), lines.length);
-    lines.splice(insertionLine, 0, editLink, wikilink);
+    lines.splice(insertionLine, 0, wikilink);
     return lines.join(eol);
   });
 }
 
 function lineIndexAtOffset(text: string, offset: number): number { let line = 0; for (let index = 0; index < offset && index < text.length; index += 1) if (text[index] === "\n") line += 1; return line; }
-function makeHistoryKey(ctx: MarkdownPostProcessorContext, section: MarkdownSectionInformation | null, kind: BlockKind, source: string): string { const location = section ? `${section.lineStart}` : createHash("sha256").update(source).digest("hex").slice(0, 16); return `${ctx.sourcePath}:${location}:${kind}`; }
+
+function makeHistoryKey(ctx: MarkdownPostProcessorContext, section: MarkdownSectionInformation | null, kind: BlockKind, source: string): string {
+  // The block identity must survive Reading/Live Preview reconstruction. A
+  // source hash is stable while the TikZ source is unchanged and does not
+  // depend on Obsidian's mutable section line numbers or generated links.
+  const sourceHash = createHash("sha256").update(source).digest("hex").slice(0, 24);
+  return `${ctx.sourcePath}:${kind}:${sourceHash}`;
+}
 
 async function replaceSource(app: App, ctx: MarkdownPostProcessorContext, el: HTMLElement, kind: BlockKind, nextSource: string): Promise<void> {
   const section = ctx.getSectionInfo(el);
