@@ -1,0 +1,10 @@
+{
+  "id": "tikz-renderer",
+  "name": "TikZ Renderer",
+  "version": "0.1.0",
+  "minAppVersion": "1.8.7",
+  "description": "Render TikZ, PGFPlots, circuitikz and LaTeX code blocks in Obsidian using a local TeX installation.",
+  "author": "Amirali Bazrgar",
+  "authorUrl": "https://github.com/ali-bazrgar",
+  "isDesktopOnly": true
+}
