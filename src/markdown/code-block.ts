@@ -2,11 +2,12 @@ import { App, MarkdownPostProcessorContext, MarkdownSectionInformation, TFile } 
 import { createHash } from "node:crypto";
 import { BlockKind } from "../core/types";
 import { RenderService } from "../core/render-service";
+import { ExportService } from "../core/export-service";
 import { TikzHistoryStore } from "../core/history";
 import { TikzRendererView } from "../ui/renderer-view";
 
 export class TikzMarkdownProcessor {
-  static async process(app: App, history: TikzHistoryStore, kind: BlockKind, source: string, el: HTMLElement, ctx: MarkdownPostProcessorContext, service: RenderService): Promise<void> {
+  static async process(app: App, exportService: ExportService, history: TikzHistoryStore, kind: BlockKind, source: string, el: HTMLElement, ctx: MarkdownPostProcessorContext, service: RenderService): Promise<void> {
     const host = el.createDiv({ cls: "tikz-renderer-block" });
     el.empty(); host.createDiv({ cls: "tikz-renderer-status", text: "Rendering TikZ…" });
     const section = ctx.getSectionInfo(el);
@@ -15,7 +16,7 @@ export class TikzMarkdownProcessor {
     try {
       const result = await service.render(source, kind);
       if (!el.isConnected) return;
-      new TikzRendererView(app, host, result, source, service, kind, history, historyKey, async (nextSource) => {
+      new TikzRendererView(app, exportService, host, result, source, service, kind, history, historyKey, async (nextSource) => {
         await replaceSource(app, ctx, el, kind, nextSource);
       }).render();
     } catch (error) {
