@@ -4,7 +4,7 @@ import { DEFAULT_SETTINGS, TikzSettings } from "./settings/settings";
 import { BlockKind } from "./core/types";
 import { TikzMarkdownProcessor } from "./markdown/code-block";
 import { texLiveExecutableCandidates } from "./core/executable-detector";
-import { tikzLivePreviewExtension } from "./editor/live-preview";
+import { createTikzLivePreviewExtensions } from "./editor/live-preview";
 
 const LANGUAGES: BlockKind[] = ["tikz", "pgfplots", "circuitikz", "tex", "latex"];
 
@@ -16,11 +16,9 @@ export default class TikzRendererPlugin extends Plugin {
     await this.loadSettings();
     this.renderService = new RenderService(this.app, () => this.settings);
 
-    // CM6 extension registration is intentionally isolated to one extension
-    // array. The extension uses a StateField for block replacement, which is
-    // the supported place for block decorations; no ViewPlugin block
-    // decorations are used.
-    this.registerEditorExtension(tikzLivePreviewExtension);
+    // The StateField owns block decorations. TeX compilation starts only from
+    // the widget's DOM lifecycle, so editor transactions never await TeX.
+    this.registerEditorExtension(createTikzLivePreviewExtensions(this.renderService));
 
     for (const language of LANGUAGES) {
       this.registerMarkdownCodeBlockProcessor(language, (source, el, ctx) =>
