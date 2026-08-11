@@ -1,4 +1,4 @@
-import { Decoration, DecorationSet, EditorView, ViewPlugin, ViewUpdate, WidgetType } from "@codemirror/view";
+import { Decoration, DecorationSet, EditorView, WidgetType } from "@codemirror/view";
 import { EditorState, RangeSetBuilder, StateField } from "@codemirror/state";
 
 class TikzPlaceholderWidget extends WidgetType {
@@ -16,14 +16,16 @@ class TikzPlaceholderWidget extends WidgetType {
   ignoreEvent(): boolean { return false; }
 }
 
-interface Fence {
-  from: number;
-  to: number;
-  language: string;
-}
-
 const FENCE = /(^|\n)(```(tikz|pgfplots|circuitikz|tex|latex)\n)([\s\S]*?)(\n```)(?=\n|$)/g;
 
+/**
+ * Live Preview decoration layer.
+ *
+ * Block replacement is deliberately provided by a StateField rather than a
+ * ViewPlugin. CodeMirror 6 forbids block decorations supplied directly by a
+ * view plugin. The field also leaves the source untouched whenever the
+ * selection intersects a TikZ fence, preserving normal editing semantics.
+ */
 export const tikzLivePreviewField = StateField.define<DecorationSet>({
   create: (state) => buildDecorations(state),
   update: (decorations, transaction) => {
@@ -33,6 +35,8 @@ export const tikzLivePreviewField = StateField.define<DecorationSet>({
   provide: (field) => EditorView.decorations.from(field),
 });
 
+export const tikzLivePreviewExtension = [tikzLivePreviewField];
+
 function buildDecorations(state: EditorState): DecorationSet {
   const builder = new RangeSetBuilder<Decoration>();
   const selections = state.selection.ranges;
@@ -41,20 +45,17 @@ function buildDecorations(state: EditorState): DecorationSet {
 
   let match: RegExpExecArray | null;
   while ((match = FENCE.exec(text)) !== null) {
-    const linePrefix = match[1] ?? "";
-    const fenceStart = match.index + linePrefix.length;
+    const linePrefixLength = (match[1] ?? "").length;
+    const fenceStart = match.index + linePrefixLength;
     const fenceEnd = fenceStart + match[2].length + match[4].length + match[5].length;
-    const language = match[3];
-    const fence: Fence = { from: fenceStart, to: fenceEnd, language };
 
-    // Never replace a block while the user's selection/cursor is inside it.
-    if (selections.some((range) => range.from <= fence.to && range.to >= fence.from)) continue;
+    if (selections.some((range) => range.from < fenceEnd && range.to > fenceStart)) continue;
 
     builder.add(
-      fence.from,
-      fence.to,
+      fenceStart,
+      fenceEnd,
       Decoration.replace({
-        widget: new TikzPlaceholderWidget(fence.language),
+        widget: new TikzPlaceholderWidget(match[3]),
         block: true,
       }),
     );
@@ -62,18 +63,3 @@ function buildDecorations(state: EditorState): DecorationSet {
 
   return builder.finish();
 }
-
-export const tikzLivePreviewExtension = [tikzLivePreviewField];
-
-export class TikzLivePreviewLifecycle {
-  private readonly extension = tikzLivePreviewField;
-
-  update(_update: ViewUpdate): void {
-    // Reserved for the asynchronous SVG renderer integration. Rendering must not
-    // run inside decoration calculation or block the CodeMirror update cycle.
-  }
-
-  getExtension(): typeof tikzLivePreviewField { return this.extension; }
-}
-
-export const tikzLivePreviewPlugin = ViewPlugin.fromClass(TikzLivePreviewLifecycle);
