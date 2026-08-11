@@ -28,24 +28,32 @@ export class TikzRendererView {
     this.cleanup?.();
     this.cleanup = undefined;
     this.host.empty();
-    const shell = this.host.createDiv({ cls: "tikz-renderer-shell" });
-    const controls = shell.createDiv({ cls: "tikz-renderer-controls" });
-    const menu = controls.createEl("button", { cls: "tikz-renderer-menu", attr: { "aria-label": "TikZ controls", "aria-expanded": "false", type: "button", title: "TikZ controls" } });
-    menu.textContent = "⋯";
-    const panel = shell.createDiv({ cls: "tikz-renderer-panel" });
-    panel.hidden = true;
-    panel.setAttribute("role", "menu");
 
+    const shell = this.host.createDiv({ cls: "tikz-renderer-shell" });
     const paper = shell.createDiv({ cls: "tikz-renderer-paper" });
     const viewport = paper.createDiv({ cls: "tikz-renderer-viewport" });
-    const assetLink = viewport.createEl("a", { cls: "tikz-renderer-asset-link", attr: { href: "#", "aria-label": "Open TikZ SVG asset", title: "Open rendered SVG" } });
-    const img = assetLink.createEl("img", { cls: "tikz-renderer-svg", attr: { alt: "TikZ diagram", draggable: "false" } });
-    img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(this.result.svg)}`;
-    assetLink.addEventListener("click", (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      if (this.result.assetPath) this.app.workspace.openLinkText(this.result.assetPath, this.sourcePath, false);
+    const assetLink = viewport.createEl("a", {
+      cls: "tikz-renderer-asset-link",
+      attr: { href: "#", "aria-label": "Open TikZ SVG asset", title: "Open rendered SVG" },
     });
+    const img = assetLink.createEl("img", {
+      cls: "tikz-renderer-svg",
+      attr: { alt: "TikZ diagram", draggable: "false" },
+    });
+    img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(this.result.svg)}`;
+
+    // The controls are deliberately portaled to <body>. They are never clipped by
+    // the figure's width/height/overflow and therefore remain fully usable.
+    const controls = this.host.ownerDocument.body.createDiv({ cls: "tikz-renderer-controls" });
+    const menu = controls.createEl("button", {
+      cls: "tikz-renderer-menu",
+      attr: { "aria-label": "TikZ controls", "aria-expanded": "false", type: "button", title: "TikZ controls" },
+    });
+    menu.textContent = "⋯";
+
+    const panel = this.host.ownerDocument.body.createDiv({ cls: "tikz-renderer-panel" });
+    panel.hidden = true;
+    panel.setAttribute("role", "menu");
 
     let zoom = Math.min(5, Math.max(0.25, this.getSettings().defaultZoom / 100));
     let x = 0;
@@ -53,41 +61,80 @@ export class TikzRendererView {
     let dragging = false;
     let lastX = 0;
     let lastY = 0;
+
     const clampZoom = (value: number): number => Math.min(5, Math.max(0.25, value));
     const apply = (): void => {
       img.style.transform = `translate3d(${x}px, ${y}px, 0) scale(${zoom})`;
       img.dataset.zoom = `${Math.round(zoom * 100)}%`;
       viewport.classList.toggle("is-pannable", zoom > 1);
+      viewport.classList.toggle("is-zoomed", zoom !== 1);
     };
-    const resetView = (): void => { zoom = Math.min(5, Math.max(0.25, this.getSettings().defaultZoom / 100)); x = 0; y = 0; apply(); };
-    const fit = (): void => {
-      const availableWidth = Math.max(1, viewport.clientWidth - 20);
-      const availableHeight = Math.max(1, viewport.clientHeight - 20);
-      zoom = img.naturalWidth > 0 && img.naturalHeight > 0 ? clampZoom(Math.min(1, availableWidth / img.naturalWidth, availableHeight / img.naturalHeight)) : 1;
+
+    const resetView = (): void => {
+      zoom = Math.min(5, Math.max(0.25, this.getSettings().defaultZoom / 100));
       x = 0;
       y = 0;
       apply();
     };
 
-    const closePanel = (): void => { panel.hidden = true; menu.setAttribute("aria-expanded", "false"); };
+    const fit = (): void => {
+      const availableWidth = Math.max(1, this.host.clientWidth - 16);
+      const naturalWidth = img.naturalWidth || img.getBoundingClientRect().width;
+      if (naturalWidth > 0) zoom = clampZoom(Math.min(1, availableWidth / naturalWidth));
+      x = 0;
+      y = 0;
+      apply();
+    };
+
+    const closePanel = (): void => {
+      panel.hidden = true;
+      menu.setAttribute("aria-expanded", "false");
+    };
+
+    const positionControls = (): void => {
+      const rect = shell.getBoundingClientRect();
+      controls.style.left = `${Math.max(4, rect.left - 24)}px`;
+      controls.style.top = `${rect.top + 1}px`;
+    };
+
+    const positionPanel = (): void => {
+      const buttonRect = menu.getBoundingClientRect();
+      const panelWidth = Math.min(340, Math.max(190, panel.offsetWidth || 240));
+      const panelHeight = panel.offsetHeight || 240;
+      const gap = 6;
+      let left = buttonRect.right + gap;
+      let top = buttonRect.top;
+      if (left + panelWidth > window.innerWidth - 8) left = Math.max(8, buttonRect.left - panelWidth - gap);
+      if (top + panelHeight > window.innerHeight - 8) top = Math.max(8, window.innerHeight - panelHeight - 8);
+      panel.style.left = `${left}px`;
+      panel.style.top = `${top}px`;
+    };
+
     menu.addEventListener("click", (event) => {
       event.preventDefault();
       event.stopPropagation();
       panel.hidden = !panel.hidden;
       menu.setAttribute("aria-expanded", `${!panel.hidden}`);
+      if (!panel.hidden) positionPanel();
     });
 
     const ownerDocument = this.host.ownerDocument;
     const outsideClick = (event: MouseEvent): void => {
-      if (panel.hidden || panel.contains(event.target as Node) || menu.contains(event.target as Node)) return;
+      const target = event.target as Node;
+      if (panel.hidden || panel.contains(target) || menu.contains(target)) return;
       closePanel();
     };
     ownerDocument.addEventListener("click", outsideClick, true);
 
     const addButton = (label: string, action: () => void | Promise<void>): void => {
       const button = panel.createEl("button", { text: label, attr: { type: "button", role: "menuitem" } });
-      button.addEventListener("click", (event) => { event.preventDefault(); event.stopPropagation(); void action(); });
+      button.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        void action();
+      });
     };
+
     addButton("Zoom −", () => { zoom = clampZoom(zoom - 0.25); apply(); });
     addButton("Zoom +", () => { zoom = clampZoom(zoom + 0.25); apply(); });
     addButton("Reset view", resetView);
@@ -105,22 +152,40 @@ export class TikzRendererView {
         this.result.assetPath = await this.exportService.saveSvg(next.svg, next.hash, this.sourcePath, false);
         closePanel();
         this.render();
-      } catch (error) { new Notice(error instanceof Error ? error.message : String(error), 8000); }
+      } catch (error) {
+        new Notice(error instanceof Error ? error.message : String(error), 8000);
+      }
     });
-    addButton("Copy source", async () => { await navigator.clipboard.writeText(this.source); new Notice("TikZ source copied."); });
-    addButton("Copy embed", async () => { await navigator.clipboard.writeText(`\`\`\`${this.kind}\n${this.source}\n\`\`\``); new Notice("TikZ embed copied."); });
+    addButton("Copy source", async () => {
+      await navigator.clipboard.writeText(this.source);
+      new Notice("TikZ source copied.");
+    });
+    addButton("Copy embed", async () => {
+      await navigator.clipboard.writeText(`\`\`\`${this.kind}\n${this.source}\n\`\`\``);
+      new Notice("TikZ embed copied.");
+    });
     addButton("Export SVG", async () => {
       try {
         const path = await this.exportService.saveSvg(this.result.svg, this.result.hash, this.sourcePath);
         this.result.assetPath = path;
         this.showAssetLink(panel, "SVG", path);
-      } catch (error) { new Notice(error instanceof Error ? error.message : String(error), 8000); }
+      } catch (error) {
+        new Notice(error instanceof Error ? error.message : String(error), 8000);
+      }
     });
     addButton("Export PNG", async () => {
       try {
         const path = await this.exportService.savePng(this.result.svg, this.result.hash, this.sourcePath);
         this.showAssetLink(panel, "PNG", path);
-      } catch (error) { new Notice(error instanceof Error ? error.message : String(error), 8000); }
+      } catch (error) {
+        new Notice(error instanceof Error ? error.message : String(error), 8000);
+      }
+    });
+
+    assetLink.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (!dragging && zoom <= 1 && this.result.assetPath) this.app.workspace.openLinkText(this.result.assetPath, this.sourcePath, false);
     });
 
     viewport.addEventListener("pointerdown", (event) => {
@@ -141,11 +206,20 @@ export class TikzRendererView {
       apply();
       event.preventDefault();
     });
-    const stopDragging = (): void => { dragging = false; viewport.classList.remove("is-dragging"); };
+    const stopDragging = (): void => {
+      dragging = false;
+      viewport.classList.remove("is-dragging");
+    };
     viewport.addEventListener("pointerup", stopDragging);
     viewport.addEventListener("pointercancel", stopDragging);
     viewport.addEventListener("lostpointercapture", stopDragging);
-    viewport.addEventListener("wheel", (event) => {
+
+    // Only Ctrl/Cmd + wheel changes figure zoom. Ordinary wheel is left untouched
+    // so Obsidian keeps its normal document scrolling behavior.
+    const wheel = (event: WheelEvent): void => {
+      if (!event.ctrlKey && !event.metaKey) return;
+      event.preventDefault();
+      event.stopPropagation();
       const nextZoom = clampZoom(zoom * (event.deltaY < 0 ? 1.12 : 1 / 1.12));
       if (nextZoom === zoom) return;
       const rect = viewport.getBoundingClientRect();
@@ -156,16 +230,47 @@ export class TikzRendererView {
       y = py - (py - y) * ratio;
       zoom = nextZoom;
       apply();
-      event.preventDefault();
-    }, { passive: false });
-    img.addEventListener("load", () => { if (zoom === 1) fit(); }, { once: true });
+    };
+    viewport.addEventListener("wheel", wheel, { passive: false });
+
+    img.addEventListener("load", () => {
+      if (this.getSettings().defaultZoom === 100) fit();
+      positionControls();
+    }, { once: true });
+
+    const observer = new MutationObserver(() => {
+      this.applyTheme(shell);
+      positionControls();
+      if (!panel.hidden) positionPanel();
+    });
+    observer.observe(ownerDocument.documentElement, { attributes: true, attributeFilter: ["class"] });
+
+    const resizeObserver = new ResizeObserver(() => {
+      positionControls();
+      if (!panel.hidden) positionPanel();
+    });
+    resizeObserver.observe(shell);
+
+    const view = ownerDocument.defaultView;
+    const scrollHandler = (): void => {
+      positionControls();
+      if (!panel.hidden) positionPanel();
+    };
+    view?.addEventListener("scroll", scrollHandler, true);
+    view?.addEventListener("resize", scrollHandler);
 
     this.applyTheme(shell);
-    const observer = this.installThemeObserver(shell);
     apply();
+    positionControls();
+
     this.cleanup = () => {
       ownerDocument.removeEventListener("click", outsideClick, true);
-      observer?.disconnect();
+      view?.removeEventListener("scroll", scrollHandler, true);
+      view?.removeEventListener("resize", scrollHandler);
+      observer.disconnect();
+      resizeObserver.disconnect();
+      controls.remove();
+      panel.remove();
       this.cleanup = undefined;
     };
   }
@@ -207,13 +312,6 @@ export class TikzRendererView {
       element.style.removeProperty("--tikz-custom-bg");
       element.style.removeProperty("--tikz-custom-bg-opacity");
     }
-  }
-
-  private installThemeObserver(element: HTMLElement): MutationObserver | undefined {
-    if (this.getSettings().displayTheme !== "auto") return undefined;
-    const observer = new MutationObserver(() => this.applyTheme(element));
-    observer.observe(this.host.ownerDocument.documentElement, { attributes: true, attributeFilter: ["class"] });
-    return observer;
   }
 
   private showAssetLink(panel: HTMLElement, type: string, path: string): void {
