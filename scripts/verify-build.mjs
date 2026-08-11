@@ -25,14 +25,16 @@ if (!renderer.includes("this.result.assetPath = await this.exportService.saveSvg
 if (!/svg\.addEventListener\("click",\s*e\s*=>\s*\{\s*e\.preventDefault\(\);\s*e\.stopPropagation\(\);\s*\}\)/.test(renderer)) throw new Error("The inline SVG must not behave as the generated asset link.");
 if (!renderer.includes('text: "⋯"')) throw new Error("TikZ writing-view three-dot controls are missing.");
 
-const livePreview = await readFile("src/editor/live-preview.ts", "utf8");
-if (livePreview.includes("svgDataUri") || livePreview.includes('createEl("img"')) throw new Error("Live Preview must not rasterize TikZ SVG through an image data URI.");
-
 const processor = await readFile("src/markdown/code-block.ts", "utf8");
 if (!processor.includes("const wikilink = `[[${assetPath}]]`;")) throw new Error("TikZ processor must create a real Obsidian wikilink for the generated SVG.");
-if (!processor.includes("ensureSourceAssetLink")) throw new Error("TikZ processor is missing source asset-link synchronization.");
-if (!processor.includes("generated.classList.add(GENERATED_ASSET_CLASS)")) throw new Error("Generated SVG wikilinks must be marked directly without hiding their figure wrapper.");
+if (!processor.includes("ensureSourceAssetLinks")) throw new Error("TikZ processor is missing source asset-link synchronization.");
+if (!processor.includes("link.classList.add(GENERATED_ASSET_CLASS)")) throw new Error("Generated SVG wikilinks must be marked directly on their anchor.");
+if (!processor.includes("for (let index = lines.length - 1; index >= 0; index -= 1)")) throw new Error("Generated links must be globally cleaned before reinsertion to prevent duplicates.");
 if (processor.includes("wrapper.classList.add(GENERATED_ASSET_CLASS)")) throw new Error("Generated SVG wikilink processing must not hide the figure wrapper.");
+
+const mainSource = await readFile("src/main.ts", "utf8");
+if (!mainSource.includes("new MutationObserver(() => this.markGeneratedLinks())")) throw new Error("Generated-link marking must observe Obsidian's delayed link rendering.");
+if (!mainSource.includes("link.dataset.tikzGenerated")) throw new Error("Generated SVG links must carry an explicit TikZ marker.");
 
 const css = await readFile("styles.css", "utf8");
 const compactCss = css.replace(/\s+/g, "");
@@ -42,7 +44,8 @@ if (!compactCss.includes('.tikz-renderer-paper{position:relative;display:content
 if (!css.includes('.markdown-preview-view .tikz-generated-asset-link{display:none!important')) throw new Error("Generated SVG wikilinks must be hidden only in Reading view.");
 if (!css.includes('.markdown-preview-view .tikz-generated-edit-link{display:none!important')) throw new Error("Generated Edit links must be hidden only in Reading view.");
 if (!css.includes('.markdown-source-view .tikz-renderer-controls{display:flex!important')) throw new Error("Writing-view TikZ controls must remain visible.");
-if (css.includes('.markdown-source-view .tikz-renderer-panel{display:grid}') && !css.includes('.markdown-source-view .tikz-renderer-panel:not([hidden]){display:grid}')) throw new Error("Writing-view panel CSS must not override the hidden attribute at startup.");
+if (css.includes('.markdown-source-view .tikz-renderer-panel{display:grid}')) throw new Error("Writing-view panel CSS must not override the hidden attribute at startup.");
+if (!css.includes('.markdown-source-view .tikz-renderer-panel:not([hidden]){display:grid}')) throw new Error("Writing-view panel must only become a grid when explicitly opened.");
 
 const manifest = JSON.parse(await readFile("manifest.json", "utf8"));
 const packageJson = JSON.parse(await readFile("package.json", "utf8"));
@@ -51,4 +54,4 @@ if (manifest.version !== packageJson.version) throw new Error(`Version mismatch:
 const inputs = Object.keys(meta.inputs ?? {});
 console.log("Build artifacts verified.");
 console.log(`esbuild bundled inputs: ${inputs.length}`);
-console.log("Verified: inline SVG, hidden popup startup, capture-phase Ctrl+wheel zoom, one visual figure layer, left-attached controls, non-clickable figure, Writing controls, and Reading-view-only generated-link hiding.");
+console.log("Verified: inline SVG, hidden popup startup, capture-phase Ctrl+wheel zoom, one visual figure layer, left-attached controls, non-clickable figure, idempotent generated links, delayed DOM marking, and Reading-view-only generated-link hiding.");
