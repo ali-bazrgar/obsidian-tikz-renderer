@@ -38,14 +38,14 @@ async function replaceSource(app: App, ctx: MarkdownPostProcessorContext, el: HT
   const file = app.vault.getFileByPath(ctx.sourcePath);
   if (!(file instanceof TFile)) throw new Error("The source note is no longer available.");
   const original = section.text;
-  const open = `\`\`\`${kind}`;
+  const open = "```" + kind;
   const start = original.indexOf(open);
   if (start < 0) throw new Error("Could not locate the TikZ code fence in the source section.");
   const openEnd = original.indexOf("\n", start);
   if (openEnd < 0) throw new Error("Malformed TikZ code fence.");
   const close = original.indexOf("\n```", openEnd + 1);
   if (close < 0) throw new Error("Could not locate the closing TikZ fence.");
-  const replacement = `${original.slice(0, openEnd + 1)}${nextSource.replace(/\r?\n$/u, "")}\n```\n${original.slice(close + 5)}`.replace(/\n\n$/u, "\n");
+  const replacement = `${original.slice(0, openEnd + 1)}${nextSource.replace(/\r?\n$/u, "")}\n\`\`\`\n${original.slice(close + 5)}`.replace(/\n\n$/u, "\n");
   await app.vault.process(file, (data) => {
     const sectionIndex = data.indexOf(original);
     if (sectionIndex < 0) throw new Error("The note changed before the edit could be applied. Please render again and retry.");
