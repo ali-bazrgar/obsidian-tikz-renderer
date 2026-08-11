@@ -85,16 +85,11 @@ async function ensureSourceAssetLinks(app: App, sourcePath: string, section: Mar
   await app.vault.process(file, data => {
     const eol = data.includes("\r\n") ? "\r\n" : "\n";
     const lines = data.split(/\r?\n/u);
-
-    // Generated SVG links are state, not source. Remove every previous
-    // renderer-generated SHA-256 SVG link before inserting the current one.
-    // This prevents one link from accumulating on every metadata/render pass.
-    for (let index = lines.length - 1; index >= 0; index -= 1) {
-      const trimmed = lines[index].trim();
-      if (GENERATED_SVG_WIKILINK.test(trimmed) || /\[✎\s*Edit TikZ\]\(\s*#tikz-edit\\?:/u.test(trimmed)) lines.splice(index, 1);
-    }
-
     const startLine = Math.max(0, Math.min(section.lineStart, lines.length - 1));
+
+    // Locate the fence first, using the original line numbers. This is
+    // important because generated links from another block must never shift
+    // the section coordinates before we locate the current block.
     let open = -1;
     for (let i = startLine; i < lines.length; i += 1) {
       if (lines[i].trimEnd() === `\`\`\`${kind}`) { open = i; break; }
@@ -106,7 +101,24 @@ async function ensureSourceAssetLinks(app: App, sourcePath: string, section: Mar
       if (lines[i].trim() === "```") { close = i; break; }
     }
     if (close < 0) return data;
-    lines.splice(close + 1, 0, wikilink);
+
+    // Remove only the generated links belonging to this block, immediately
+    // following its fence. Never delete arbitrary user wikilinks elsewhere.
+    let insertAt = close + 1;
+    while (insertAt < lines.length) {
+      const trimmed = lines[insertAt].trim();
+      if (trimmed === "") {
+        insertAt += 1;
+        continue;
+      }
+      if (GENERATED_SVG_WIKILINK.test(trimmed) || /\[✎\s*Edit TikZ\]\(\s*#tikz-edit\\?:/u.test(trimmed)) {
+        lines.splice(insertAt, 1);
+        continue;
+      }
+      break;
+    }
+
+    lines.splice(insertAt, 0, wikilink);
     return lines.join(eol);
   });
 }
