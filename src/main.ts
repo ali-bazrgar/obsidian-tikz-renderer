@@ -11,7 +11,7 @@ import { TikzRendererView } from "./ui/renderer-view";
 const LANGUAGES: BlockKind[] = ["tikz", "pgfplots", "circuitikz", "tex", "latex"];
 const GENERATED_ASSET_CLASS = "tikz-generated-asset-link";
 const GENERATED_EDIT_CLASS = "tikz-generated-edit-link";
-const SETTINGS_MIGRATION_VERSION = 3;
+const SETTINGS_MIGRATION_VERSION = 4;
 
 export default class TikzRendererPlugin extends Plugin {
   settings!: TikzSettings;
@@ -53,9 +53,7 @@ export default class TikzRendererPlugin extends Plugin {
 
   private syncRenderedTheme(): void {
     const settings = this.settings;
-    const theme = settings.displayTheme === "auto"
-      ? (document.body.classList.contains("theme-dark") ? "dark" : "light")
-      : settings.displayTheme;
+    const theme = settings.displayTheme === "auto" ? (document.body.classList.contains("theme-dark") ? "dark" : "light") : settings.displayTheme;
     document.querySelectorAll<HTMLElement>(".tikz-renderer-shell").forEach((shell) => {
       shell.dataset.theme = theme;
       if (theme === "custom") {
@@ -86,12 +84,9 @@ export default class TikzRendererPlugin extends Plugin {
       changed = true;
     }
 
-    // The resolver architecture deliberately starts from a clean TeX configuration.
-    // Old executable paths, a stale TeX Live root, and an old timeout can otherwise
-    // survive in Obsidian's plugin data.json even after the defaults are changed.
-    // Preserve unrelated UI/user preferences, but reset only TeX/render pipeline
-    // settings once when upgrading to this architecture.
     if (migrationVersion < SETTINGS_MIGRATION_VERSION) {
+      // Remove stale compiler/preamble state from the pre-resolver pipeline.
+      // UI preferences and the user's asset/history locations are preserved.
       merged.engine = DEFAULT_SETTINGS.engine;
       merged.latexPath = DEFAULT_SETTINGS.latexPath;
       merged.pdflatexPath = DEFAULT_SETTINGS.pdflatexPath;
@@ -106,7 +101,6 @@ export default class TikzRendererPlugin extends Plugin {
       merged.preamble = DEFAULT_SETTINGS.preamble;
       (merged as TikzSettings & { __settingsMigrationVersion?: number }).__settingsMigrationVersion = SETTINGS_MIGRATION_VERSION;
       changed = true;
-      // A stale cache can contain documents generated with the old heavy preamble.
       await this.purgeLegacyCache();
     }
 
@@ -145,17 +139,7 @@ export default class TikzRendererPlugin extends Plugin {
 
 function isLegacyHeavyDefaultPreamble(preamble: string | undefined): boolean {
   if (!preamble) return false;
-  const requiredMarkers = [
-    "\\usepackage{pgfplots}",
-    "\\usepackage{circuitikz}",
-    "\\usepackage{tikz-cd}",
-    "\\usepackage{forest}",
-    "\\usepackage{smartdiagram}",
-    "\\usepackage{pgf-pie}",
-    "\\usepackage{pgfgantt}",
-    "\\pgfplotsset{compat=1.18}",
-    "\\usetikzlibrary{arrows,arrows.meta",
-  ];
+  const requiredMarkers = ["\\usepackage{pgfplots}", "\\usepackage{circuitikz}", "\\usepackage{tikz-cd}", "\\usepackage{forest}", "\\usepackage{smartdiagram}", "\\usepackage{pgf-pie}", "\\usepackage{pgfgantt}", "\\pgfplotsset{compat=1.18}", "\\usetikzlibrary{arrows,arrows.meta"];
   return requiredMarkers.every((marker) => preamble.includes(marker));
 }
 
