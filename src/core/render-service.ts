@@ -12,7 +12,7 @@ import { augmentPreamble } from "./tex-package-detector";
 import { TeXDependencyResolver } from "./tex-dependency-resolver";
 
 const execFileAsync = promisify(execFile);
-const PIPELINE_VERSION = "19-wrapper-and-tex-diagnostics";
+const PIPELINE_VERSION = "20-svg-text-as-paths";
 const MAX_OUTPUT = 4 * 1024 * 1024;
 const MAX_DEPENDENCY_RETRIES = 3;
 
@@ -64,7 +64,6 @@ export class RenderService {
     const work = path.join(cache, `work-${hash}-${Math.random().toString(36).slice(2, 10)}`);
     await fs.mkdir(cache, { recursive: true });
     await fs.mkdir(work, { recursive: true });
-
     let effectivePreamble = augmentPreamble(settings.preamble, source);
     let lastLog = "";
 
@@ -73,8 +72,7 @@ export class RenderService {
       effectivePreamble = (await resolver.resolve(settings.preamble, source, effectivePreamble)).preamble;
 
       for (let attempt = 0; attempt <= MAX_DEPENDENCY_RETRIES; attempt += 1) {
-        const tex = buildDocument(source, settings, effectivePreamble);
-        await fs.writeFile(path.join(work, "main.tex"), tex, "utf8");
+        await fs.writeFile(path.join(work, "main.tex"), buildDocument(source, settings, effectivePreamble), "utf8");
         try {
           await this.run(plan.executable, compilerArgs("main.tex", work, plan.outputType), work, settings.compileTimeout);
           lastLog = await this.readLog(work);
@@ -106,13 +104,16 @@ export class RenderService {
     const output = path.join(work, "main.svg");
     if (outputType === "pdf") {
       const mutool = settings.mutoolPath.trim() || "mutool";
-      const result = await this.runCapture(mutool, ["draw", "-q", "-F", "svg", "-o", "-", input, "1"], work, settings.compileTimeout);
+      // MuPDF's SVG writer can emit text as real <text> elements, but those
+      // rely on font metrics that can be overridden by Obsidian/theme CSS.
+      // Emit TeX text as vector paths instead: the glyph geometry is preserved
+      // exactly and inline SVG cannot substitute or corrupt math characters.
+      const args = ["draw", "-q", "-F", "svg", "-O", "text=path,no-reuse-images", "-o", "-", input, "1"];
+      const result = await this.runCapture(mutool, args, work, settings.compileTimeout);
       const stdout = String(result.stdout ?? "").trim();
-      if (stdout.startsWith("<svg") || /<svg\b/i.test(stdout)) {
-        const svgStart = stdout.search(/<svg\b/i);
-        await fs.writeFile(output, stdout.slice(svgStart), "utf8");
-      }
-      if (!await this.exists(output)) await this.run(mutool, ["draw", "-q", "-F", "svg", "-o", output, input, "1"], work, settings.compileTimeout);
+      const svgStart = stdout.search(/<svg\b/i);
+      if (svgStart >= 0) await fs.writeFile(output, stdout.slice(svgStart), "utf8");
+      if (!await this.exists(output)) await this.run(mutool, ["draw", "-q", "-F", "svg", "-O", "text=path,no-reuse-images", "-o", output, input, "1"], work, settings.compileTimeout);
       if (!await this.exists(output)) {
         const numbered = path.join(work, "main-1.svg");
         if (await this.exists(numbered)) await fs.rename(numbered, output);
@@ -121,11 +122,14 @@ export class RenderService {
       const dvisvgm = settings.dvisvgmPath.trim() || "dvisvgm";
       let dvisvgmError: unknown = undefined;
       try {
-        await this.run(dvisvgm, ["--exact-bbox", "--no-fonts", "--verbosity=0", input, "-o", output], work, settings.compileTimeout);
+        // Variant 1 creates standalone path elements rather than reusable
+        // <use> references, which is safest when the SVG is imported inline.
+        await this.run(dvisvgm, ["--exact-bbox", "--no-fonts=1", "--verbosity=0", input, "-o", output], work, settings.compileTimeout);
       } catch (error) { dvisvgmError = error; }
       if (!await this.exists(output)) {
-        const candidates = [path.join(work, "main-1.svg"), path.join(work, "main-01.svg")];
-        for (const candidate of candidates) if (await this.exists(candidate)) { await fs.rename(candidate, output); break; }
+        for (const candidate of [path.join(work, "main-1.svg"), path.join(work, "main-01.svg")]) {
+          if (await this.exists(candidate)) { await fs.rename(candidate, output); break; }
+        }
       }
       if (!await this.exists(output)) {
         const dvipdfmx = resolveSiblingExecutable(settings.latexPath, "dvipdfmx");
@@ -134,11 +138,11 @@ export class RenderService {
           await this.run(dvipdfmx, ["-o", pdf, input], work, settings.compileTimeout);
           if (await this.exists(pdf)) {
             const mutool = settings.mutoolPath.trim() || "mutool";
-            const result = await this.runCapture(mutool, ["draw", "-q", "-F", "svg", "-o", "-", pdf, "1"], work, settings.compileTimeout);
+            const result = await this.runCapture(mutool, ["draw", "-q", "-F", "svg", "-O", "text=path,no-reuse-images", "-o", "-", pdf, "1"], work, settings.compileTimeout);
             const stdout = String(result.stdout ?? "").trim();
             const svgStart = stdout.search(/<svg\b/i);
             if (svgStart >= 0) await fs.writeFile(output, stdout.slice(svgStart), "utf8");
-            if (!await this.exists(output)) await this.run(mutool, ["draw", "-q", "-F", "svg", "-o", output, pdf, "1"], work, settings.compileTimeout);
+            if (!await this.exists(output)) await this.run(mutool, ["draw", "-q", "-F", "svg", "-O", "text=path,no-reuse-images", "-o", output, pdf, "1"], work, settings.compileTimeout);
             if (!await this.exists(output)) {
               const numbered = path.join(work, "main-from-dvi-1.svg");
               if (await this.exists(numbered)) await fs.rename(numbered, output);
@@ -213,7 +217,6 @@ export function selectEngine(source: string, settings: TikzSettings): EnginePlan
   else if (/graphdrawing/iu.test(text) || /\\usetikzlibrary\s*\{[^}]*graphdrawing[^}]*\}/isu.test(text)) engine = "lualatex";
   else if (/\\(?:special|dvips)/u.test(source)) engine = "latex";
   else engine = "pdflatex";
-
   const executable = ({ latex: settings.latexPath, pdflatex: settings.pdflatexPath, xelatex: settings.xelatexPath, lualatex: settings.lualatexPath, dvilualatex: settings.dvilualatexPath } as Record<Exclude<Engine, "auto">, string>)[engine];
   const outputType: EnginePlan["outputType"] = engine === "latex" || engine === "dvilualatex" ? "dvi" : engine === "xelatex" ? "xdv" : "pdf";
   return { engine, executable, outputType };
@@ -227,8 +230,6 @@ export function buildDocument(source: string, settings: TikzSettings, preambleOv
   const needsXepersian = needsXe && !/\\usepackage\s*\{\s*xepersian\s*\}/u.test(effectivePreamble) && /[\u0600-\u06ff]/u.test(source);
   const language = needsXepersian ? `\\usepackage{xepersian}\n\\settextfont{${escapeTex(settings.persianFont)}}\n` : "";
 
-  // A complete TeX document owns its own document environment. Preserve it,
-  // but merge the resolver-generated preamble into its existing preamble.
   if (/^\\documentclass\b/u.test(body) && /\\begin\{document\}/u.test(body)) {
     const documentIndex = body.search(/\\begin\{document\}/u);
     const documentBody = body.slice(documentIndex);
@@ -246,16 +247,9 @@ export function buildDocument(source: string, settings: TikzSettings, preambleOv
   const hasTikzCommands = /(?:^|\n)\s*\\(?:draw|path|fill|filldraw|shade|shadedraw|clip|node|coordinate|matrix|pic|graph|foreach|spy|pattern|useasboundingbox)\b/u.test(body);
 
   let wrapper: string;
-  if (hasPictureEnvironment || hasStandalonePgfplotsEnvironment || hasDisplayMathEnvironment || hasGeneralTexEnvironment) {
-    wrapper = body;
-  } else if (hasTikzCommands || /^\\(?:tikz|tikzset|usetikzlibrary|pgfkeys|pgfplotsset)\b/u.test(body)) {
-    wrapper = `\\begin{tikzpicture}\n${body}\n\\end{tikzpicture}`;
-  } else {
-    // The markdown block may be ordinary TeX/LaTeX. Do not force arbitrary
-    // TeX environments into a tikzpicture; that corrupts grouping and causes
-    // errors such as "Missing \\endgroup" at the end of gather/align.
-    wrapper = body;
-  }
+  if (hasPictureEnvironment || hasStandalonePgfplotsEnvironment || hasDisplayMathEnvironment || hasGeneralTexEnvironment) wrapper = body;
+  else if (hasTikzCommands || /^\\(?:tikz|tikzset|usetikzlibrary|pgfkeys|pgfplotsset)\b/u.test(body)) wrapper = `\\begin{tikzpicture}\n${body}\n\\end{tikzpicture}`;
+  else wrapper = body;
 
   const documentClass = needsXe || hasDisplayMathEnvironment || hasGeneralTexEnvironment ? "article" : "standalone";
   return `\\documentclass{${documentClass}}\n${effectivePreamble}\n${language}\\begin{document}\n${wrapper}\n\\end{document}\n`;
