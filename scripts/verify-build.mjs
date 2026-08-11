@@ -25,7 +25,7 @@ if (!renderer.includes("this.result.assetPath = await this.exportService.saveSvg
 if (!/svg\.addEventListener\("click",\s*e\s*=>\s*\{\s*e\.preventDefault\(\);\s*e\.stopPropagation\(\);\s*\}\)/.test(renderer)) throw new Error("Inline SVG must not behave as the generated asset link.");
 if (!renderer.includes('text: "⋯"')) throw new Error("Writing-view controls are missing.");
 if (!renderer.includes('const isReadingMode = (): boolean => !!shell.closest(".markdown-preview-view")')) throw new Error("Reading-mode detection is missing.");
-if (!renderer.includes('shell.dataset.mode = reading ? "reading" : "writing"')) throw new Error("Renderer must explicitly track Reading/Writing mode.");
+if (!renderer.includes('shell.dataset.mode = nextReadingMode ? "reading" : "writing"')) throw new Error("Renderer must explicitly track Reading/Writing mode.");
 if (!renderer.includes('if (isReadingMode()) return;')) throw new Error("Interactive operations must be blocked in Reading mode.");
 if (!renderer.includes('isReadingMode() ? "auto" : zoom > 1 ? "none" : "pan-y"')) throw new Error("Reading mode must not expose pan touch behavior.");
 
