@@ -9,6 +9,8 @@ type TikzViewState = { zoom: number; panX: number; panY: number };
 
 export class TikzRendererView extends MarkdownRenderChild {
   private cleanup?: () => void;
+  private sharedStateKey?: string;
+  private applyExternalState?: (state: TikzViewState) => void;
   private static readonly activeViews = new Map<string, TikzRendererView>();
   private static readonly allViews = new Set<TikzRendererView>();
   private static readonly viewStates = new Map<string, TikzViewState>();
@@ -18,6 +20,7 @@ export class TikzRendererView extends MarkdownRenderChild {
   render(): void {
     this.cleanup?.();
     const stateKey = `${this.sourcePath}::${this.historyKey}`;
+    this.sharedStateKey = stateKey;
     const previous = TikzRendererView.activeViews.get(stateKey);
     if (previous && previous !== this) previous.dispose(false);
     TikzRendererView.activeViews.set(stateKey, this);
@@ -39,9 +42,10 @@ export class TikzRendererView extends MarkdownRenderChild {
     let naturalWidth = 0, naturalHeight = 0, dragging = false, lastX = 0, lastY = 0;
     const isReadingMode = (): boolean => !!shell.closest(".markdown-preview-view");
     const closePanel = (): void => { panel.hidden = true; menu.setAttribute("aria-expanded", "false"); menu.removeAttribute("data-open"); };
-    const syncSharedState = (): boolean => { const shared = TikzRendererView.viewStates.get(stateKey); if (!shared) return false; const changed = zoom !== shared.zoom || panX !== shared.panX || panY !== shared.panY; if (changed) { zoom = clampZoom(shared.zoom); panX = shared.panX; panY = shared.panY; } return changed; };
+    const applyLocalViewState = (state: TikzViewState): void => { zoom = clampZoom(state.zoom); panX = state.panX; panY = state.panY; if (naturalWidth > 0 && naturalHeight > 0) { svg.style.width = `${naturalWidth * zoom}px`; svg.style.height = `${naturalHeight * zoom}px`; svg.style.maxWidth = "none"; } svg.style.transform = `translate3d(${panX}px, ${panY}px, 0)`; viewport.classList.toggle("is-pannable", !isReadingMode() && zoom > 1); viewport.style.touchAction = isReadingMode() ? "auto" : zoom > 1 ? "none" : "pan-y"; };
+    const syncSharedState = (): boolean => { const shared = TikzRendererView.viewStates.get(stateKey); if (!shared) return false; const changed = zoom !== shared.zoom || panX !== shared.panX || panY !== shared.panY; if (changed) applyLocalViewState(shared); return changed; };
     const updateMode = (): boolean => { const reading = isReadingMode(); const stateChanged = syncSharedState(); shell.dataset.mode = reading ? "reading" : "writing"; controls.hidden = reading; if (reading) { dragging = false; closePanel(); } return stateChanged; };
-    const persistViewState = (): void => { const state = { zoom, panX, panY }; TikzRendererView.viewStates.set(stateKey, state); saveViewState(stateKey, state); };
+    const persistViewState = (): void => { const state = { zoom, panX, panY }; TikzRendererView.viewStates.set(stateKey, state); saveViewState(stateKey, state); for (const view of TikzRendererView.allViews) { if (view !== this && view.sharedStateKey === stateKey) view.applyExternalState?.(state); } };
     const positionPanel = (): void => { if (panel.hidden || !shell.isConnected || isReadingMode()) return; const b = menu.getBoundingClientRect(); const vw = win?.innerWidth ?? doc.documentElement.clientWidth; const vh = win?.innerHeight ?? doc.documentElement.clientHeight; const width = Math.min(270, Math.max(230, vw - 16)); panel.style.width = `${width}px`; const r = panel.getBoundingClientRect(); let left = b.left; let top = b.bottom + 6; if (left + r.width > vw - 8) left = Math.max(8, vw - r.width - 8); if (left < 8) left = 8; if (top + r.height > vh - 8) top = b.top - r.height - 6; if (top < 8) top = 8; panel.style.left = `${Math.round(left)}px`; panel.style.top = `${Math.round(top)}px`; };
     const applyTheme = (): void => { const s = this.getSettings(); const theme = s.displayTheme === "auto" ? detectTheme(doc) : s.displayTheme; shell.dataset.theme = theme; if (theme === "custom") { shell.style.setProperty("--tikz-custom-bg", s.customBackgroundColor); shell.style.setProperty("--tikz-custom-bg-opacity", `${s.customBackgroundOpacity / 100}`); } else { shell.style.removeProperty("--tikz-custom-bg"); shell.style.removeProperty("--tikz-custom-bg-opacity"); } };
     const ensureIntrinsicSize = (): boolean => { if (naturalWidth > 0 && naturalHeight > 0) return true; const b = svg.viewBox?.baseVal; if (b && b.width > 0 && b.height > 0) { naturalWidth = b.width; naturalHeight = b.height; return true; } const w = Number.parseFloat(svg.getAttribute("width") ?? ""); const h = Number.parseFloat(svg.getAttribute("height") ?? ""); if (w > 0 && h > 0) { naturalWidth = w; naturalHeight = h; return true; } return false; };
@@ -66,8 +70,9 @@ export class TikzRendererView extends MarkdownRenderChild {
     const observer = new MutationObserver(() => { const changed = updateMode(); if (changed) applyZoom(); else { applyTheme(); positionPanel(); } }); observer.observe(doc.body, { attributes: true, attributeFilter: ["class"] });
     const resizeObserver = new ResizeObserver(() => positionPanel()); resizeObserver.observe(viewport);
     const reposition = (): void => positionPanel(); win?.addEventListener("scroll", reposition, true); win?.addEventListener("resize", reposition);
+    this.applyExternalState = (state: TikzViewState): void => { if (!this.containerEl.isConnected) return; applyLocalViewState(state); };
     buildMainPanel(); closePanel(); updateMode(); applyTheme(); ensureIntrinsicSize(); applyZoom();
-    this.cleanup = () => { if (TikzRendererView.activeViews.get(stateKey) === this) persistViewState(); doc.removeEventListener("pointerdown", outsidePointerDown, true); doc.removeEventListener("keydown", escape, true); menu.removeEventListener("pointerdown", togglePanel); win?.removeEventListener("wheel", wheel, true); win?.removeEventListener("scroll", reposition, true); win?.removeEventListener("resize", reposition); observer.disconnect(); resizeObserver.disconnect(); closePanel(); panel.remove(); if (TikzRendererView.activeViews.get(stateKey) === this) TikzRendererView.activeViews.delete(stateKey); TikzRendererView.allViews.delete(this); this.cleanup = undefined; };
+    this.cleanup = () => { if (TikzRendererView.activeViews.get(stateKey) === this) persistViewState(); this.applyExternalState = undefined; this.sharedStateKey = undefined; doc.removeEventListener("pointerdown", outsidePointerDown, true); doc.removeEventListener("keydown", escape, true); menu.removeEventListener("pointerdown", togglePanel); win?.removeEventListener("wheel", wheel, true); win?.removeEventListener("scroll", reposition, true); win?.removeEventListener("resize", reposition); observer.disconnect(); resizeObserver.disconnect(); closePanel(); panel.remove(); if (TikzRendererView.activeViews.get(stateKey) === this) TikzRendererView.activeViews.delete(stateKey); TikzRendererView.allViews.delete(this); this.cleanup = undefined; };
   }
   onunload(): void { this.cleanup?.(); this.containerEl.empty(); }
   dispose(emptyContainer = true): void { this.cleanup?.(); if (emptyContainer && this.containerEl.isConnected) this.containerEl.empty(); }
