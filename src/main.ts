@@ -6,7 +6,6 @@ import { DEFAULT_SETTINGS, TikzSettings } from "./settings/settings";
 import { BlockKind } from "./core/types";
 import { TikzMarkdownProcessor } from "./markdown/code-block";
 import { texLiveExecutableCandidates, ExecutableProbe, probeAllExecutables, TeXExecutableName } from "./core/executable-detector";
-import { createTikzLivePreviewExtensions } from "./editor/live-preview";
 import { TikzRendererView } from "./ui/renderer-view";
 
 const LANGUAGES: BlockKind[] = ["tikz", "pgfplots", "circuitikz", "tex", "latex"];
@@ -22,8 +21,11 @@ export default class TikzRendererPlugin extends Plugin {
     this.renderService = new RenderService(this.app, () => this.settings);
     this.exportService = new ExportService(this.app, () => this.settings.assetFolder);
     this.historyStore = new TikzHistoryStore(this.app, () => this.settings.historyLimit);
-    this.registerEditorExtension(createTikzLivePreviewExtensions(this.renderService));
 
+    // Reading-mode rendering is deliberately independent of CodeMirror. The
+    // previous editor-extension layer bundled its own @codemirror/state/view
+    // instances and could conflict with Obsidian's internal editor runtime.
+    // TikZ rendering in notes does not require that dependency.
     for (const language of LANGUAGES) {
       this.registerMarkdownCodeBlockProcessor(language, (source, el, ctx) =>
         TikzMarkdownProcessor.process(this.app, this.exportService, this.historyStore, language, source, el, ctx, this.renderService, () => this.settings, async (settings) => this.saveSettings(settings)),
