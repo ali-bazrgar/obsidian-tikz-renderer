@@ -12,7 +12,7 @@ import { augmentPreamble } from "./tex-package-detector";
 import { TeXDependencyResolver } from "./tex-dependency-resolver";
 
 const execFileAsync = promisify(execFile);
-const PIPELINE_VERSION = "13-safe-texlive-resolver";
+const PIPELINE_VERSION = "14-texlive-block-resolver-pdf";
 const MAX_OUTPUT = 4 * 1024 * 1024;
 const MAX_DEPENDENCY_RETRIES = 3;
 
@@ -22,9 +22,6 @@ export class RenderError extends Error {
 
 export class RenderService {
   private readonly inFlight = new Map<string, Promise<RenderResult>>();
-  // TeX Live is CPU/RAM intensive. Serializing compilation prevents several
-  // independent code blocks in one Obsidian render pass from spawning multiple
-  // TeX engines at once and freezing the desktop.
   private readonly limiter = new ConcurrencyLimiter(1);
 
   constructor(private readonly app: App, private readonly getSettings: () => TikzSettings) {}
@@ -45,29 +42,17 @@ export class RenderService {
 
   async testInstallation(): Promise<{ summary: string; results: Awaited<ReturnType<typeof probeAllExecutables>> }> {
     const settings = this.getSettings();
-    const results = await probeAllExecutables({
-      latex: settings.latexPath, pdflatex: settings.pdflatexPath, xelatex: settings.xelatexPath,
-      lualatex: settings.lualatexPath, dvilualatex: settings.dvilualatexPath,
-      dvisvgm: settings.dvisvgmPath, mutool: settings.mutoolPath,
-    });
+    const results = await probeAllExecutables({ latex: settings.latexPath, pdflatex: settings.pdflatexPath, xelatex: settings.xelatexPath, lualatex: settings.lualatexPath, dvilualatex: settings.dvilualatexPath, dvisvgm: settings.dvisvgmPath, mutool: settings.mutoolPath });
     return { summary: results.map((x) => `${x.name}: ${x.ok ? "OK" : "FAILED"}`).join("\n"), results };
   }
 
   async detectExecutables(): Promise<Partial<TikzSettings>> {
     const settings = this.getSettings();
     const fromRoot = texLiveExecutableCandidates(settings.texLiveRoot);
-    const configured = {
-      latex: fromRoot.latex ?? settings.latexPath, pdflatex: fromRoot.pdflatex ?? settings.pdflatexPath,
-      xelatex: fromRoot.xelatex ?? settings.xelatexPath, lualatex: fromRoot.lualatex ?? settings.lualatexPath,
-      dvilualatex: fromRoot.dvilualatex ?? settings.dvilualatexPath, dvisvgm: fromRoot.dvisvgm ?? settings.dvisvgmPath,
-      mutool: fromRoot.mutool ?? settings.mutoolPath,
-    } satisfies Partial<Record<TeXExecutableName, string>>;
+    const configured = { latex: fromRoot.latex ?? settings.latexPath, pdflatex: fromRoot.pdflatex ?? settings.pdflatexPath, xelatex: fromRoot.xelatex ?? settings.xelatexPath, lualatex: fromRoot.lualatex ?? settings.lualatexPath, dvilualatex: fromRoot.dvilualatex ?? settings.dvilualatexPath, dvisvgm: fromRoot.dvisvgm ?? settings.dvisvgmPath, mutool: fromRoot.mutool ?? settings.mutoolPath } satisfies Partial<Record<TeXExecutableName, string>>;
     const results = await probeAllExecutables(configured);
     const output: Partial<TikzSettings> = {};
-    for (const result of results) {
-      if (!result.ok) continue;
-      (output as Record<string, unknown>)[`${result.name}Path`] = result.configuredPath;
-    }
+    for (const result of results) if (result.ok) (output as Record<string, unknown>)[`${result.name}Path`] = result.configuredPath;
     return output;
   }
 
@@ -90,7 +75,6 @@ export class RenderService {
       for (let attempt = 0; attempt <= MAX_DEPENDENCY_RETRIES; attempt += 1) {
         const tex = buildDocument(source, settings, effectivePreamble);
         await fs.writeFile(path.join(work, "main.tex"), tex, "utf8");
-
         try {
           await this.run(plan.executable, compilerArgs("main.tex", work, plan.outputType), work, settings.compileTimeout);
           lastLog = await this.readLog(work);
@@ -98,17 +82,15 @@ export class RenderService {
         } catch (error) {
           lastLog = await this.readLog(work);
           if (attempt >= MAX_DEPENDENCY_RETRIES) throw this.normalizeError(error, lastLog);
-
           const resolved = await resolver.resolveFromLog(source, effectivePreamble, lastLog);
           if (!resolved.added.length) throw this.normalizeError(error, lastLog);
           effectivePreamble = resolved.preamble;
         }
       }
 
-      const extension = plan.outputType === "pdf" ? "pdf" : plan.outputType === "xdv" ? "xdv" : "dvi";
+      const extension = plan.outputType === "pdf" ? "pdf" : "xdv";
       const input = path.join(work, `main.${extension}`);
       if (!await this.exists(input)) throw new RenderError(`TeX compiler completed without producing ${path.basename(input)}.`, lastLog);
-
       const svg = await this.convertToSvg(input, plan.outputType, work, settings);
       await fs.writeFile(cached, svg, "utf8");
       return { hash, svg, engine: plan.engine, fromCache: false, source, kind };
@@ -143,9 +125,8 @@ export class RenderService {
   }
 
   private async run(executable: string, args: string[], cwd: string, timeout: number): Promise<void> {
-    try {
-      await execFileAsync(executable, args, { cwd, timeout, windowsHide: true, maxBuffer: MAX_OUTPUT });
-    } catch (error) {
+    try { await execFileAsync(executable, args, { cwd, timeout, windowsHide: true, maxBuffer: MAX_OUTPUT }); }
+    catch (error) {
       const x = error as NodeJS.ErrnoException & { killed?: boolean; stdout?: string; stderr?: string };
       if (x.code === "ENOENT") throw new RenderError(`Executable not found: ${executable}`, x.message);
       if (x.code === "ETIMEDOUT" || x.killed) throw new RenderError(`Process timed out after ${timeout} ms: ${executable}`, x.stderr ?? x.message);
@@ -170,7 +151,7 @@ export function selectEngine(source: string, settings: TikzSettings): EnginePlan
   else if (/\\usepackage\s*\{\s*(?:xepersian|fontspec)\s*\}|[\u0600-\u06ff]/u.test(text)) engine = "xelatex";
   else if (/graphdrawing/iu.test(text) || /\\usetikzlibrary\s*\{[^}]*graphdrawing[^}]*\}/isu.test(text)) engine = "lualatex";
   else if (/\\(?:special|dvips)/u.test(source)) engine = "latex";
-  else engine = "latex";
+  else engine = "pdflatex";
 
   const executable = ({ latex: settings.latexPath, pdflatex: settings.pdflatexPath, xelatex: settings.xelatexPath, lualatex: settings.lualatexPath, dvilualatex: settings.dvilualatexPath } as Record<Exclude<Engine, "auto">, string>)[engine];
   const outputType: EnginePlan["outputType"] = engine === "latex" || engine === "dvilualatex" ? "dvi" : engine === "xelatex" ? "xdv" : "pdf";
@@ -180,7 +161,6 @@ export function selectEngine(source: string, settings: TikzSettings): EnginePlan
 export function buildDocument(source: string, settings: TikzSettings, preambleOverride?: string): string {
   const body = source.trim();
   if (/^\\documentclass\b/u.test(body) && /\\begin\{document\}/u.test(body)) return body.endsWith("\n") ? body : `${body}\n`;
-
   const effectivePreamble = preambleOverride ?? augmentPreamble(settings.preamble, source);
   const text = `${effectivePreamble}\n${source}`;
   const needsXe = /[\u0600-\u06ff]/u.test(text) || /\\usepackage\s*\{\s*(?:xepersian|fontspec)\s*\}/u.test(text);
@@ -189,11 +169,7 @@ export function buildDocument(source: string, settings: TikzSettings, preambleOv
   const hasDocumentWrapper = /\\begin\{document\}/u.test(body);
   const hasPictureEnvironment = /\\begin\{(?:tikzpicture|circuitikz|pgfonlayer)\}/u.test(body);
   const hasStandalonePgfplotsEnvironment = /\\begin\{(?:axis|semilogxaxis|semilogyaxis|loglogaxis)\}/u.test(body);
-  const wrapper = hasDocumentWrapper || hasPictureEnvironment
-    ? body
-    : hasStandalonePgfplotsEnvironment
-      ? `\\begin{tikzpicture}\n${body}\n\\end{tikzpicture}`
-      : `\\begin{tikzpicture}\n${body}\n\\end{tikzpicture}`;
+  const wrapper = hasDocumentWrapper || hasPictureEnvironment ? body : hasStandalonePgfplotsEnvironment ? `\\begin{tikzpicture}\n${body}\n\\end{tikzpicture}` : `\\begin{tikzpicture}\n${body}\n\\end{tikzpicture}`;
   return `\\documentclass{${needsXe ? "article" : "standalone"}}\n${effectivePreamble}\n${language}\\begin{document}\n${wrapper}\n\\end{document}\n`;
 }
 
@@ -203,9 +179,4 @@ export function compilerArgs(tex: string, work: string, outputType: EnginePlan["
 }
 
 function escapeTex(value: string): string { return value.replace(/[{}%\\]/g, "\\$&"); }
-function sanitizeSvg(svg: string): string {
-  return svg
-    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "")
-    .replace(/<foreignObject\b[^>]*>[\s\S]*?<\/foreignObject>/gi, "")
-    .replace(/\son[a-z]+\s*=\s*(?:"[^"]*"|'[^']*')/gi, "");
-}
+function sanitizeSvg(svg: string): string { return svg.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "").replace(/<foreignObject\b[^>]*>[\s\S]*?<\/foreignObject>/gi, "").replace(/\son[a-z]+\s*=\s*(?:"[^"]*"|'[^']*')/gi, ""); }
