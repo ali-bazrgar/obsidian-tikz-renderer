@@ -39,23 +39,28 @@ export class TeXDependencyResolver {
 
       for (const candidate of candidates) {
         const key = `${candidate.kind}:${candidate.name}`;
-        if (seen.has(key) || this.hasDependency(preamble, candidate)) continue;
+        if (seen.has(key)) continue;
         seen.add(key);
 
         if (!(await this.existsInTeXLive(candidate.file))) continue;
 
         if (candidate.kind === "package") {
-          preamble = appendLine(preamble, `\\usepackage{${candidate.name}}`);
-          if (candidate.name === "pgfplots") {
-            // Make PGFPlots behavior deterministic across TeX Live installations.
-            // This is local to blocks that actually use PGFPlots.
-            preamble = appendLine(preamble, "\\pgfplotsset{compat=1.18}");
+          if (!this.hasDependency(preamble, candidate)) {
+            preamble = appendLine(preamble, `\\usepackage{${candidate.name}}`);
+            added.push(candidate);
+            changed = true;
           }
-        } else {
+
+          if (candidate.name === "pgfplots" && !hasPgfplotsCompat(preamble)) {
+            // Keep the compatibility setting local to blocks that use PGFPlots.
+            preamble = appendLine(preamble, "\\pgfplotsset{compat=1.18}");
+            changed = true;
+          }
+        } else if (!this.hasDependency(preamble, candidate)) {
           preamble = appendTikzLibrary(preamble, candidate.name);
+          added.push(candidate);
+          changed = true;
         }
-        added.push(candidate);
-        changed = true;
       }
 
       if (!currentLog || !changed) break;
@@ -162,6 +167,10 @@ function appendTikzLibrary(preamble: string, library: string): string {
   const existing = match[1].split(",").map((x) => x.trim()).filter(Boolean);
   if (existing.includes(library)) return preamble;
   return preamble.replace(match[0], `\\usetikzlibrary{${[...existing, library].join(",")}}`);
+}
+
+function hasPgfplotsCompat(preamble: string): boolean {
+  return /\\pgfplotsset\s*\{[^}]*\bcompat\s*=\s*1\.18\b[^}]*\}/u.test(preamble);
 }
 
 function dedupe(items: TeXDependency[]): TeXDependency[] {
