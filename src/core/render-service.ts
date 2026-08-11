@@ -6,7 +6,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { Engine, TikzSettings } from "../settings/settings";
 import { BlockKind, EnginePlan, RenderResult } from "./types";
-import { ConcurrencyLimiter } from "./concurrency-limiter";
+import { ConcurrencyLimiter } from "./concurrency";
 import { probeAllExecutables, TeXExecutableName, texLiveExecutableCandidates } from "./executable-detector";
 
 const execFileAsync = promisify(execFile);
@@ -68,7 +68,7 @@ export class RenderService {
   private async renderUnique(source: string, kind: BlockKind, plan: EnginePlan, hash: string, settings: TikzSettings): Promise<RenderResult> {
     const cache = this.cacheRoot();
     const cached = path.join(cache, `${hash}.svg`);
-    if (await this.exists(cached)) return { hash, svg: await fs.readFile(cached, "utf8"), engine: plan.engine, cached: true };
+    if (await this.exists(cached)) return { hash, svg: await fs.readFile(cached, "utf8"), engine: plan.engine, fromCache: true, source, kind };
     const work = path.join(cache, `work-${hash}-${Math.random().toString(36).slice(2, 10)}`);
     await fs.mkdir(work, { recursive: true });
     try {
@@ -79,7 +79,7 @@ export class RenderService {
       if (!await this.exists(input)) throw new RenderError(`TeX compiler completed without producing ${path.basename(input)}.`);
       const svg = await this.convertToSvg(input, plan.outputType, work, settings);
       await fs.writeFile(cached, svg, "utf8");
-      return { hash, svg, engine: plan.engine, cached: false };
+      return { hash, svg, engine: plan.engine, fromCache: false, source, kind };
     } catch (error) {
       throw this.normalizeError(error, await this.readLog(work));
     } finally {
