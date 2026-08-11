@@ -37,7 +37,7 @@ const LIBRARY_BY_PATTERN: Array<[RegExp, string]> = [
   [/\b(?:mindmap|concept color|concept connection)\b/u, "mindmap"],
   [/\b(?:pattern=|pattern color|patterns)\b/u, "patterns"],
   [/\b(?:above=of|below=of|left=of|right=of|above left=of|below right=of)\b/u, "positioning"],
-  [/\b(?:quotes|pic\s+\{|\"[^\"]+\"\s+edge)\b/u, "quotes"],
+  [/\b(?:quotes|pic\s+\{|[^\s]+\s+edge)\b/u, "quotes"],
   [/\b(?:scope\s*\[.*?on background layer|local bounding box)\b/isu, "scopes"],
   [/\b(?:diamond|trapezium|regular polygon|ellipse)\b/u, "shapes.geometric"],
   [/\b(?:single arrow|double arrow|triangle 90|signal)\b/u, "shapes.arrows"],
