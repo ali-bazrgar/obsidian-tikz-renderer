@@ -19,7 +19,7 @@ export class TikzMarkdownProcessor {
       const result = await service.render(source, kind);
       if (!el.isConnected) return;
       result.assetPath = await exportService.saveSvg(result.svg, result.hash, ctx.sourcePath, false);
-      await ensureSourceAssetLink(app, ctx, result.assetPath);
+      if (section) await ensureSourceAssetLink(app, ctx.sourcePath, section, result.assetPath);
       const view = new TikzRendererView(app, exportService, host, result, source, ctx.sourcePath, service, kind, history, historyKey, async (nextSource) => {
         await replaceSource(app, ctx, el, kind, nextSource);
       }, getSettings, saveSettings);
@@ -36,15 +36,12 @@ export class TikzMarkdownProcessor {
 }
 
 /** Add a real Obsidian wikilink directly below the TikZ fence. */
-async function ensureSourceAssetLink(app: App, ctx: MarkdownPostProcessorContext, assetPath: string): Promise<void> {
-  const section = ctx.getSectionInfo(ctx.docId ? document.body : document.body);
-  const file = app.vault.getFileByPath(ctx.sourcePath);
+async function ensureSourceAssetLink(app: App, sourcePath: string, section: MarkdownSectionInformation, assetPath: string): Promise<void> {
+  const file = app.vault.getFileByPath(sourcePath);
   if (!(file instanceof TFile) || !assetPath) return;
-  const block = ctx.getSectionInfo(document.querySelector(".tikz-renderer-block") as HTMLElement);
-  if (!block) return;
   await app.vault.process(file, (data) => {
-    const start = findNthLineOffset(data, block.lineEnd);
-    const before = data.slice(Math.max(0, start - 300), start);
+    const start = findNthLineOffset(data, section.lineEnd);
+    const before = data.slice(Math.max(0, start - 500), start);
     const wikilink = `[[${assetPath}]]`;
     if (before.includes(wikilink)) return data;
     const eol = data.includes("\r\n") ? "\r\n" : "\n";
