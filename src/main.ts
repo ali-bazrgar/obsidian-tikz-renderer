@@ -11,6 +11,7 @@ import { TikzRendererView } from "./ui/renderer-view";
 const LANGUAGES: BlockKind[] = ["tikz", "pgfplots", "circuitikz", "tex", "latex"];
 const GENERATED_ASSET_CLASS = "tikz-generated-asset-link";
 const GENERATED_EDIT_CLASS = "tikz-generated-edit-link";
+const SETTINGS_MIGRATION_VERSION = 3;
 
 export default class TikzRendererPlugin extends Plugin {
   settings!: TikzSettings;
@@ -75,19 +76,55 @@ export default class TikzRendererPlugin extends Plugin {
   }
 
   async loadSettings(): Promise<void> {
-    const saved = await this.loadData() as Partial<TikzSettings> | null;
+    const saved = await this.loadData() as (Partial<TikzSettings> & { __settingsMigrationVersion?: number }) | null;
     const merged = { ...DEFAULT_SETTINGS, ...(saved ?? {}) };
+    const migrationVersion = saved?.__settingsMigrationVersion ?? 0;
+    let changed = false;
 
-    // Existing installations retain their saved preamble, so changing
-    // DEFAULT_PREAMBLE alone would not fix users who already opened the
-    // previous version. Only migrate the exact/characteristic heavy default;
-    // user-customized preambles are left untouched.
     if (isLegacyHeavyDefaultPreamble(merged.preamble)) {
       merged.preamble = DEFAULT_SETTINGS.preamble;
+      changed = true;
+    }
+
+    // The resolver architecture deliberately starts from a clean TeX configuration.
+    // Old executable paths, a stale TeX Live root, and an old timeout can otherwise
+    // survive in Obsidian's plugin data.json even after the defaults are changed.
+    // Preserve unrelated UI/user preferences, but reset only TeX/render pipeline
+    // settings once when upgrading to this architecture.
+    if (migrationVersion < SETTINGS_MIGRATION_VERSION) {
+      merged.engine = DEFAULT_SETTINGS.engine;
+      merged.latexPath = DEFAULT_SETTINGS.latexPath;
+      merged.pdflatexPath = DEFAULT_SETTINGS.pdflatexPath;
+      merged.xelatexPath = DEFAULT_SETTINGS.xelatexPath;
+      merged.lualatexPath = DEFAULT_SETTINGS.lualatexPath;
+      merged.dvilualatexPath = DEFAULT_SETTINGS.dvilualatexPath;
+      merged.dvisvgmPath = DEFAULT_SETTINGS.dvisvgmPath;
+      merged.mutoolPath = DEFAULT_SETTINGS.mutoolPath;
+      merged.texLiveRoot = DEFAULT_SETTINGS.texLiveRoot;
+      merged.cacheFolder = DEFAULT_SETTINGS.cacheFolder;
+      merged.compileTimeout = DEFAULT_SETTINGS.compileTimeout;
+      merged.preamble = DEFAULT_SETTINGS.preamble;
+      (merged as TikzSettings & { __settingsMigrationVersion?: number }).__settingsMigrationVersion = SETTINGS_MIGRATION_VERSION;
+      changed = true;
+      // A stale cache can contain documents generated with the old heavy preamble.
+      await this.purgeLegacyCache();
     }
 
     this.settings = merged;
-    if (saved && merged.preamble !== saved.preamble) await this.saveData(this.settings);
+    if (changed || migrationVersion !== SETTINGS_MIGRATION_VERSION) await this.saveData(this.settings);
+  }
+
+  private async purgeLegacyCache(): Promise<void> {
+    const adapter = this.app.vault.adapter;
+    if (!adapter || typeof (adapter as { getBasePath?: () => string }).getBasePath !== "function") return;
+    const basePath = (adapter as { getBasePath: () => string }).getBasePath();
+    const cachePath = pathJoin(basePath, normalizePath(DEFAULT_SETTINGS.cacheFolder));
+    try {
+      const fs = await import("node:fs/promises");
+      await fs.rm(cachePath, { recursive: true, force: true });
+    } catch {
+      // Cache cleanup must never prevent the plugin from loading.
+    }
   }
 
   async saveSettings(settings?: TikzSettings): Promise<void> { if (settings) this.settings = settings; await this.saveData(this.settings); this.syncRenderedTheme(); }
@@ -120,6 +157,11 @@ function isLegacyHeavyDefaultPreamble(preamble: string | undefined): boolean {
     "\\usetikzlibrary{arrows,arrows.meta",
   ];
   return requiredMarkers.every((marker) => preamble.includes(marker));
+}
+
+function pathJoin(base: string, relative: string): string {
+  const separator = base.includes("\\") ? "\\" : "/";
+  return `${base.replace(/[\\/]+$/u, "")}${separator}${relative.replace(/^[/\\]+/u, "")}`;
 }
 
 class TikzSettingTab extends PluginSettingTab {
