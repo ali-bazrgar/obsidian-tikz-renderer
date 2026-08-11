@@ -1,5 +1,5 @@
 export type Engine = "auto" | "latex" | "pdflatex" | "xelatex" | "lualatex" | "dvilualatex";
-export type DisplayTheme = "auto" | "obsidian" | "light" | "paper" | "dark" | "contrast" | "bw";
+export type DisplayTheme = "auto" | "obsidian" | "light" | "paper" | "dark" | "contrast" | "bw" | "custom";
 
 export interface TikzSettings {
   engine: Engine;
@@ -14,6 +14,8 @@ export interface TikzSettings {
   assetFolder: string;
   cacheFolder: string;
   displayTheme: DisplayTheme;
+  customBackgroundColor: string;
+  customBackgroundOpacity: number;
   defaultZoom: number;
   keepTexSource: boolean;
   compileTimeout: number;
@@ -60,6 +62,8 @@ export const DEFAULT_SETTINGS: TikzSettings = {
   assetFolder: "TikZ Assets",
   cacheFolder: ".tikz-cache",
   displayTheme: "auto",
+  customBackgroundColor: "#ffffff",
+  customBackgroundOpacity: 100,
   defaultZoom: 100,
   keepTexSource: false,
   compileTimeout: 30000,
