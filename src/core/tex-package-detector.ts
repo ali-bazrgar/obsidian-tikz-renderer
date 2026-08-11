@@ -1,6 +1,6 @@
 const PACKAGE_BY_PATTERN: Array<[RegExp, string]> = [
   [/\\begin\{(?:align|align\*|gather|gather\*|multline|multline\*)\}/u, "amsmath"],
-  [/\\(?:dfrac|tfrac|binom|text|operatorname\*?)\b/u, "amsmath"],
+  [/\\(?:dfrac|tfrac|binom|text|operator\*?)\b/u, "amsmath"],
   [/\\mathbb\b/u, "amssymb"],
   [/\\mathfrak\b/u, "amsfonts"],
   [/\\bm\b/u, "bm"],
@@ -62,14 +62,14 @@ export function augmentPreamble(preamble: string, source: string): string {
   const libraries = new Set<string>();
 
   for (const [pattern, packageName] of PACKAGE_BY_PATTERN) {
-    if (pattern.test(source) && !hasUsepackage(preamble, packageName)) packages.add(packageName);
+    if (pattern.test(source) && !hasUsepackage(combined, packageName)) packages.add(packageName);
   }
 
   for (const library of ALWAYS_LIBRARIES) {
-    if (!hasTikzLibrary(preamble, library)) libraries.add(library);
+    if (!hasTikzLibrary(combined, library)) libraries.add(library);
   }
   for (const [pattern, library] of LIBRARY_BY_PATTERN) {
-    if (pattern.test(source) && !hasTikzLibrary(preamble, library)) libraries.add(library);
+    if (pattern.test(source) && !hasTikzLibrary(combined, library)) libraries.add(library);
   }
 
   if (packages.size === 0 && libraries.size === 0) return preamble;
