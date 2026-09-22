@@ -207,6 +207,8 @@ lualatex
 dvilualatex
 ```
 
+`dvilualatex` is retained as a compatibility setting but is not used as an SVG backend because LuaTeX's extended DVI font references are not supported by `dvisvgm`. Select `lualatex` for LuaTeX documents.
+
 The plugin uses `dvisvgm` for direct DVI/XDV-to-SVG conversion where applicable. This keeps the normal vector rendering path independent of the PDF/Ghostscript compatibility chain.
 
 ## 🔍 Figure controls
