@@ -430,7 +430,7 @@ function buildFullDocument(body: string, effectivePreamble: string): string {
   const classMatch = /^\\\\documentclass(?:\\[[^\\]]*\\])?\\{[^}]+\\}\\s*/u.exec(body);
   const start = classMatch ? classMatch[0].length : 0;
   const preamble = effectivePreamble.trim();
-  return body.slice(0, start) + (preamble ? preamble + "\\n" : "") + body.slice(begin);
+  return body.slice(0, start) + (preamble ? preamble + "\n" : "") + body.slice(begin);
 }
 
 function rewriteExternalReferences(source: string, sourcePath: string | undefined, files: ExternalDependency[]): string {
