@@ -184,7 +184,7 @@ For example:
 ```
 ````
 
-The exact font must of course be installed and available to your TeX Live installation.
+The exact font must of course be installed and available to your TeX Live installation. In plugin settings you can enter either the exact font family name or a full path to a `.ttf`, `.otf`, or `.ttc` file. An explicit font-file path takes precedence over the family name. The **Test Persian font** button compiles a small XeLaTeX probe and reports the result.
 
 ## ⚙️ Rendering engines
 
