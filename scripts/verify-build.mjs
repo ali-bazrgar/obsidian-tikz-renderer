@@ -45,6 +45,8 @@ const renderChecks = [
   ["buildFullDocument(", "full-document dependency injection"],
   ['kind === "tex" || kind === "latex"', "general LaTeX wrapper handling"],
   ["sourcePath?: string", "source-file context"],
+  ["augmentPreamble(extractDocumentPreamble(source), source)", "full-document source package detection"],
+  ["normalizeLatexSource(", "LaTeX display-math normalization"],
   ["dvilualatex is not a compatible SVG backend", "LuaTeX DVI guard"],
 ];
 for (const [needle, label] of renderChecks) {
