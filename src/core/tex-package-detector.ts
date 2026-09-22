@@ -107,7 +107,7 @@ export function augmentPreamble(preamble: string, source: string): string {
 }
 
 function insertBeforeFirstMathCommand(preamble: string, packageLine: string): string {
-  const command = /\\(?:setmathfont|setmathfontface|unimathsetup)\\b/u;
+  const command = /\\(?:setmathfont|setmathfontface|unimathsetup)\b/u;
   const index = preamble.search(command);
   if (index < 0) return preamble + "\n" + packageLine;
   return preamble.slice(0, index) + packageLine + "\n" + preamble.slice(index);
