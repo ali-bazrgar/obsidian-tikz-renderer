@@ -421,12 +421,13 @@ export function buildDocument(source: string, settings: TikzSettings, kind: Bloc
   const detectionText = `${effectivePreamble}\n${detectionSource}`;
   const needsXe = forceXe || /[\u0600-\u06ff]/u.test(detectionText) || /\\usepackage\s*\{\s*(?:xepersian|fontspec)\s*\}/u.test(detectionText);
   const hasArabicText = /[\u0600-\u06ff]/u.test(detectionText);
-  const language = needsXe && hasArabicText && !/\\usepackage\s*\{\s*xepersian\s*\}/u.test(effectivePreamble) && !/\\(?:settextfont|setlatintextfont|setmainfont|newfontfamily)\b/u.test(effectivePreamble)
-    ? settings.persianFont.trim()
-      ? `\\usepackage{xepersian}\n\\settextfont{${escapeTex(settings.persianFont.trim())}}\n`
+  const explicitFontSelection = /\\(?:settextfont|setlatintextfont|setmainfont|newfontfamily)\b/u.test(detectionText);
+  const configuredFont = getPersianFontSelection(settings);
+  const language = needsXe && hasArabicText && !/\\usepackage\s*\{\s*xepersian\s*\}/u.test(effectivePreamble) && !explicitFontSelection
+    ? configuredFont?.command
+      ? `\\usepackage{xepersian}\n${configuredFont.command}\n`
       : "\\usepackage{xepersian}\n"
-    : "";
-  const finalPreamble = language ? `${effectivePreamble.trimEnd()}\n${language}` : effectivePreamble;
+    : "";  const finalPreamble = language ? `${effectivePreamble.trimEnd()}\n${language}` : effectivePreamble;
   if (isFullDocument(body)) return buildFullDocument(body, finalPreamble);
 
   const wrapped = wrapGraphicBody(body, kind);
