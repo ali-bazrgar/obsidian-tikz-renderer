@@ -327,7 +327,7 @@ export class RenderService {
       }
     }
 
-    let totalBytes = [...files.values()].reduce((sum, item) => sum + item.bytes.byteLength, 0);
+    let totalBytes = [...files.values()].reduce((sum, item) => sum + item.bytes.byteLength, 0);\n    if (totalBytes > MAX_DEPENDENCY_TOTAL_BYTES) throw new RenderError("Referenced LaTeX assets exceed the renderer's dependency staging limit.");
     let index = 0;
     while (index < queue.length && files.size < MAX_DEPENDENCY_FILES) {
       const current = queue[index++];
