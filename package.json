@@ -1,6 +1,6 @@
 {
   "name": "tikz-renderer",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "private": true,
   "description": "Professional TikZ/PGF renderer for Obsidian Desktop",
   "main": "main.js",

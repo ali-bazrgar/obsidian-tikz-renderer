@@ -54,7 +54,7 @@ The default LaTeX/DVI and XeLaTeX/XDV pipelines do **not** require Ghostscript o
 4. Create the plugin folder:
 
    ```text
-   <Vault>/.obsidian/plugins/obsidian-tikz-renderer/
+   <Vault>/.obsidian/plugins/tikz-renderer/
    ```
 
 5. Put the three plugin files inside that folder.
@@ -185,6 +185,8 @@ For example:
 ````
 
 The exact font must of course be installed and available to your TeX Live installation. In plugin settings you can enter either the exact font family name or a full path to a `.ttf`, `.otf`, or `.ttc` file. An explicit font-file path takes precedence over the family name. The **Test Persian font** button compiles a small XeLaTeX probe and reports the result.
+
+For documents using Unicode/OpenType mathematics, commands such as `\\setmathfont`, `\\setmathfontface`, and `\\unimathsetup` automatically trigger `unicode-math` detection. `\\setmathfont` itself still needs a font with OpenType math support; a normal text font such as Arial is not a complete Unicode math font. Use a dedicated math font (for example, one of the OpenType math fonts shipped with TeX Live) when setting the full mathematics font.
 
 ## ⚙️ Rendering engines
 

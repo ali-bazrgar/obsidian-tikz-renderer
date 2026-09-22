@@ -45,6 +45,8 @@ const renderChecks = [
   ["buildFullDocument(", "full-document dependency injection"],
   ['kind === "tex" || kind === "latex"', "general LaTeX wrapper handling"],
   ["sourcePath?: string", "source-file context"],
+  ["augmentPreamble(extractDocumentPreamble(source), source)", "full-document source package detection"],
+  ["normalizeLatexSource(", "LaTeX display-math normalization"],
   ["dvilualatex is not a compatible SVG backend", "LuaTeX DVI guard"],
 ];
 for (const [needle, label] of renderChecks) {
@@ -64,7 +66,7 @@ if (!types.includes("warning?: string")) throw new Error("RenderResult warning f
 const lock = JSON.parse(await readFile("package-lock.json", "utf8"));
 const manifest = JSON.parse(await readFile("manifest.json", "utf8"));
 const pkg = JSON.parse(await readFile("package.json", "utf8"));
-if (manifest.version !== pkg.version || pkg.version !== "0.1.3") throw new Error("Plugin versions are not synchronized at 0.1.3.");
+if (manifest.version !== pkg.version || pkg.version !== "0.1.4") throw new Error("Plugin versions are not synchronized at 0.1.4.");
 if (lock.version !== pkg.version || lock.packages?.[""]?.version !== pkg.version) throw new Error("package-lock.json version is out of sync.");
 
 const css = await readFile("styles.css", "utf8");
@@ -74,7 +76,7 @@ if (!compactCss.includes("opacity:1!important")) throw new Error("TikZ figure op
 if (!css.includes('.markdown-preview-view a.tikz-generated-asset-link') || !css.includes('display:none!important')) throw new Error("Reading-view generated SVG link hiding is missing.");
 
 const detector = await readFile("src/core/tex-package-detector.ts", "utf8");
-if (!detector.includes('"amsthm"') || !detector.includes('"hyperref"') || !detector.includes('"mhchem"')) throw new Error("Expanded LaTeX package detection is missing.");
+if (!detector.includes('"amsthm"') || !detector.includes('"hyperref"') || !detector.includes('"mhchem"') || !detector.includes('"unicode-math"')) throw new Error("Expanded LaTeX package detection is missing.");
 
 const resolver = await readFile("src/core/tex-dependency-resolver.ts", "utf8");
 if (!resolver.includes("Undefined\\s+control\\s+sequence")) throw new Error("Undefined-control-sequence dependency resolution is missing.");

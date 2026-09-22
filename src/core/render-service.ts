@@ -143,8 +143,10 @@ export class RenderService {
       await this.stageExternalDependencies(external.files, work);
 
       const fullDocument = isFullDocument(source);
-      const basePreamble = fullDocument ? extractDocumentPreamble(source) : augmentPreamble(settings.preamble, source);
-      const compilationSource = rewriteExternalReferences(source, sourcePath, external.files);
+      const basePreamble = fullDocument
+        ? augmentPreamble(extractDocumentPreamble(source), source)
+        : augmentPreamble(settings.preamble, source);
+      const compilationSource = normalizeLatexSource(rewriteExternalReferences(source, sourcePath, external.files));
       const detectionSource = [compilationSource, ...external.files.map(file => file.text ?? "")].join("\n");
       const resolver = new TeXDependencyResolver(settings.texLiveRoot, plan.executable);
       let effectivePreamble = basePreamble;
@@ -439,6 +441,13 @@ export function compilerArgs(tex: string, work: string, outputType: EnginePlan["
   const shell = shellEscape === "enabled" ? "-shell-escape" : shellEscape === "restricted" ? "-shell-restricted" : "-no-shell-escape";
   const common = ["-interaction=nonstopmode", "-halt-on-error", "-file-line-error", "-synctex=0", shell, "-output-directory", work];
   return outputType === "xdv" ? [...common, "-no-pdf", tex] : [...common, tex];
+}
+
+function normalizeLatexSource(source: string): string {
+  return source.replace(/^([ \t]*)\[[ \t]*\r?\n([\s\S]*?)\r?\n\\1\][ \t]*$/gmu, (whole, indent: string, inner: string) => {
+    if (!/(?:\\\\(?:frac|dfrac|tfrac|sqrt|sum|prod|int|lim|left|right|text|mathrm|mathbf|operatorname|begin\\{|end\\{)|[_^]|[=<>])/.test(inner)) return whole;
+    return indent + "\\[\n" + inner + "\n" + indent + "\\]";
+  });
 }
 
 function wrapGraphicBody(body: string, kind: BlockKind): string {

@@ -1,6 +1,8 @@
 const PACKAGE_BY_PATTERN: Array<[RegExp, string]> = [
   [/\\begin\{(?:align|align\*|gather|gather\*|multline|multline\*)\}/u, "amsmath"],
   [/\\(?:dfrac|tfrac|binom|text|operator\*?)\b/u, "amsmath"],
+  // Unicode/OpenType mathematics commands require unicode-math under XeLaTeX/LuaLaTeX.
+  [/\\(?:setmathfont|setmathfontface|unimathsetup)\b/u, "unicode-math"],
   [/\\mathbb\b/u, "amssymb"],
   [/\\mathfrak\b/u, "amsfonts"],
   [/\\bm\b/u, "bm"],
