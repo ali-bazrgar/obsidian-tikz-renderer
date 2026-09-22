@@ -382,8 +382,8 @@ export function selectEngine(source: string, settings: TikzSettings): EnginePlan
 export function buildDocument(source: string, settings: TikzSettings, kind: BlockKind = "tikz", effectivePreamble = augmentPreamble(settings.preamble, source), forceXe = false, detectionSource = source): string {
   const body = source.trim();
   const detectionText = `${effectivePreamble}\n${detectionSource}`;
-  const needsXe = forceXe || /[\\u0600-\\u06ff]/u.test(detectionText) || /\\usepackage\s*\{\s*(?:xepersian|fontspec)\s*\}/u.test(detectionText);
-  const hasArabicText = /[\\u0600-\\u06ff]/u.test(detectionText);
+  const needsXe = forceXe || /[\u0600-\u06ff]/u.test(detectionText) || /\\usepackage\s*\{\s*(?:xepersian|fontspec)\s*\}/u.test(detectionText);
+  const hasArabicText = /[\u0600-\u06ff]/u.test(detectionText);
   const language = needsXe && hasArabicText && !/\\usepackage\s*\{\s*xepersian\s*\}/u.test(effectivePreamble) && !/\\(?:settextfont|setlatintextfont|setmainfont|newfontfamily)\b/u.test(effectivePreamble)
     ? settings.persianFont.trim()
       ? `\\usepackage{xepersian}\n\\settextfont{${escapeTex(settings.persianFont.trim())}}\n`
