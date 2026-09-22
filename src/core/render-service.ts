@@ -450,18 +450,18 @@ function rewriteReferenceCommands(source: string, currentVaultPath: string, curr
       return whole.replace(reference, relativeStagedPath(currentStagedPath, dependency.stagedPath));
     });
   };
-  replace(/\\\\(?:input|subfile)\\s*\\{([^}]+)\\}/gu, "input");
-  replace(/\\\\include\\s*\\{([^}]+)\\}/gu, "include");
-  replace(/\\\\includegraphics(?:\\[[^\\]]*\\])?\\s*\\{([^}]+)\\}/gu, "graphics");
-  replace(/\\\\addbibresource\\s*(?:\\[[^\\]]*\\])?\\s*\\{([^}]+)\\}/gu, "bib");
-  replace(/\\\\bibliography\\s*\\{([^}]+)\\}/gu, "bib");
-  replace(/\\\\lstinputlisting(?:\\[[^\\]]*\\])?\\s*\\{([^}]+)\\}/gu, "input");
+  replace(/\\(?:input|subfile)\s*\{([^}]+)\}/gu, "input");
+  replace(/\\include\s*\{([^}]+)\}/gu, "include");
+  replace(/\\includegraphics(?:\[[^\]]*\])?\s*\{([^}]+)\}/gu, "graphics");
+  replace(/\\addbibresource\s*(?:\[[^\]]*\])?\s*\{([^}]+)\}/gu, "bib");
+  replace(/\\bibliography\s*\{([^}]+)\}/gu, "bib");
+  replace(/\\lstinputlisting(?:\[[^\]]*\])?\s*\{([^}]+)\}/gu, "input");
   return result;
 }
 
 function findPreparedDependency(currentVaultPath: string, reference: string, kind: ExternalReference["kind"], files: ExternalDependency[]): ExternalDependency | undefined {
-  const clean = reference.trim().replace(/^["']|["']$/gu, "").replace(/\\\\ /gu, " ").replace(/\\\\/gu, "/").replace(/^\\.\\//u, "");
-  if (!clean || kind === "package" || clean.includes("\\0")) return undefined;
+  const clean = reference.trim().replace(/^["']|["']$/gu, "").replace(/\\ /gu, " ").replace(/\\/gu, "/").replace(/^\.\//u, "");
+  if (!clean || kind === "package" || clean.includes("\0")) return undefined;
   const names = [clean];
   if (kind === "graphics" && !path.posix.extname(clean)) {
     for (const ext of [".png", ".jpg", ".jpeg", ".pdf", ".eps", ".bmp"]) names.push(clean + ext);
@@ -469,7 +469,7 @@ function findPreparedDependency(currentVaultPath: string, reference: string, kin
   if ((kind === "input" || kind === "include") && !path.posix.extname(clean)) names.push(clean + ".tex");
   if (kind === "bib" && !path.posix.extname(clean)) names.push(clean + ".bib");
   for (const name of names) {
-    const absolute = path.posix.normalize(path.posix.isAbsolute(name) ? name.replace(/^\\/+/, "") : path.posix.join(path.posix.dirname(currentVaultPath), name));
+    const absolute = path.posix.normalize(path.posix.isAbsolute(name) ? name.replace(/^\/+/, "") : path.posix.join(path.posix.dirname(currentVaultPath), name));
     const normalized = normalizeVaultPath(absolute);
     const match = files.find(file => file.vaultPath.toLowerCase() === normalized.toLowerCase());
     if (match) return match;
@@ -478,13 +478,13 @@ function findPreparedDependency(currentVaultPath: string, reference: string, kin
 }
 
 function relativeStagedPath(currentStagedPath: string, targetStagedPath: string): string {
-  const current = currentStagedPath.replace(/\\\\/gu, "/");
-  const target = targetStagedPath.replace(/\\\\/gu, "/");
+  const current = currentStagedPath.replace(/\\/gu, "/");
+  const target = targetStagedPath.replace(/\\/gu, "/");
   const relative = path.posix.relative(path.posix.dirname(current), target);
-  return (relative || path.posix.basename(target)).replace(/\\\\/gu, "/");
+  return (relative || path.posix.basename(target)).replace(/\\/gu, "/");
 }
 
-function escapeTex(value: string): string { return value.replace(/[{}%\\]/g, "\\function escapeTex(value: string): string { return value.replace(/[{}%\\]/g, "\\$&"); }"); }
+function escapeTex(value: string): string { return value.replace(/[{}%\\]/g, "\\$&"); }
 
 function sanitizeSvg(svg: string): string {
   return svg
