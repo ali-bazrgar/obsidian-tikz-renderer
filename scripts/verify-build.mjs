@@ -77,6 +77,6 @@ if (!detector.includes('"amsthm"') || !detector.includes('"hyperref"') || !detec
 
 const resolver = await readFile("src/core/tex-dependency-resolver.ts", "utf8");
 if (!resolver.includes("Undefined\\s+control\\s+sequence")) throw new Error("Undefined-control-sequence dependency resolution is missing.");
-if (!resolver.includes("can'?t\\s+find\\s+file")) throw new Error("TikZ library missing-file parsing is missing.");
+if (!resolver.includes("tikzlibrary") || !resolver.includes("not\\s+found")) throw new Error("TikZ library missing-file parsing is missing.");
 
 console.log("Build artifacts and rendering-pipeline invariants verified.");
