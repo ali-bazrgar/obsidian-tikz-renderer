@@ -21,7 +21,7 @@ const rendererChecks = [
   ['this.result.assetPath = await this.exportService.saveSvg', "SVG asset persistence"],
   ['svg.addEventListener("click", e => { e.preventDefault(); e.stopPropagation(); })', "non-clickable inline SVG"],
   ['const isReadingMode = (): boolean => !!shell.closest(".markdown-preview-view")', "Reading mode detection"],
-  ['shell.dataset.mode = reading ? "reading" : "writing"', "Reading/Writing mode state"],
+  ['shell.dataset.mode = nextReadingMode ? "reading" : "writing"', "Reading/Writing mode state"],
   ['this.service.render(this.source, this.kind, this.sourcePath)', "source-path-aware re-render"],
 ];
 for (const [needle, label] of rendererChecks) {
