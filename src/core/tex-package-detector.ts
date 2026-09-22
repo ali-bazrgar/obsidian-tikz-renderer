@@ -85,12 +85,13 @@ export function augmentPreamble(preamble: string, source: string): string {
 
   let result = preamble.trimEnd();
 
-  // A few commands must come after the package that defines them. In
-  // particular, a full LaTeX document may already contain \\setmathfont in its
-  // preamble, so unicode-math must be inserted before that command rather than
-  // appended after it.
+  // XePersian must remain the last package loaded. Insert automatically
+  // detected packages before it, while keeping unicode-math before its
+  // math-font commands.
+  const xepersianIndex = result.search(/\\usepackage\\s*\\[?[^\\]]*\\]?\\s*\\{\\s*xepersian\\s*\\}/u);
+
   if (packages.has("unicode-math")) {
-    result = insertBeforeFirstMathCommand(result, "\\usepackage{unicode-math}");
+    result = insertBeforeFirstMathCommand(result, "\\usepackage{unicode-math}", xepersianIndex);
     packages.delete("unicode-math");
   }
 
@@ -101,16 +102,30 @@ export function augmentPreamble(preamble: string, source: string): string {
     ? `\\usetikzlibrary{${[...libraries].join(",")}}`
     : "";
 
-  return [result, packageBlock, libraryBlock]
+  if (packageBlock) result = insertPackagesBeforeXePersian(result, packageBlock);
+
+  return [result, libraryBlock]
     .filter(Boolean)
     .join("\n") + "\n";
 }
 
-function insertBeforeFirstMathCommand(preamble: string, packageLine: string): string {
+function insertBeforeFirstMathCommand(preamble: string, packageLine: string, xepersianIndex = -1): string {
   const command = /\\(?:setmathfont|setmathfontface|unimathsetup)\b/u;
-  const index = preamble.search(command);
-  if (index < 0) return preamble + "\n" + packageLine;
-  return preamble.slice(0, index) + packageLine + "\n" + preamble.slice(index);
+  const commandIndex = preamble.search(command);
+  const beforeIndex = xepersianIndex >= 0 ? xepersianIndex : preamble.length;
+  if (commandIndex >= 0 && commandIndex < beforeIndex) {
+    return preamble.slice(0, commandIndex) + packageLine + "\n" + preamble.slice(commandIndex);
+  }
+  if (beforeIndex < preamble.length) {
+    return preamble.slice(0, beforeIndex) + packageLine + "\n" + preamble.slice(beforeIndex);
+  }
+  return preamble + "\n" + packageLine;
+}
+
+function insertPackagesBeforeXePersian(preamble: string, packageBlock: string): string {
+  const match = /\\usepackage\\s*\\[?[^\\]]*\\]?\\s*\\{\\s*xepersian\\s*\\}/u.exec(preamble);
+  if (!match || match.index === undefined) return preamble + "\n" + packageBlock;
+  return preamble.slice(0, match.index) + packageBlock + "\n" + preamble.slice(match.index);
 }
 
 function hasUsepackage(text: string, name: string): boolean {
