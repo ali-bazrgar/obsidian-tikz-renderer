@@ -64,12 +64,13 @@ export class RenderService {
 
   async render(source: string, kind: BlockKind, sourcePath?: string): Promise<RenderResult> {
     const settings = this.getSettings();
-    const plan = selectEngine(source, settings);
+    const external = await this.prepareExternalDependencies(source, sourcePath);
+    const detectionSource = [source, ...external.files.map(file => file.text ?? "")].join("\n");
+    const plan = selectEngine(detectionSource, settings);
     if (plan.engine === "dvilualatex") {
       throw new RenderError("dvilualatex is not a compatible SVG backend because dvisvgm does not support LuaTeX's extended DVI font references. Use lualatex (PDF) or xelatex instead.");
     }
 
-    const external = await this.prepareExternalDependencies(source, sourcePath);
     const hash = this.hash(source, kind, plan, settings, external.fingerprint, sourcePath);
     const existing = this.inFlight.get(hash);
     if (existing) return existing;
@@ -132,6 +133,7 @@ export class RenderService {
       const fullDocument = isFullDocument(source);
       const basePreamble = fullDocument ? extractDocumentPreamble(source) : augmentPreamble(settings.preamble, source);
       const compilationSource = rewriteExternalReferences(source, sourcePath, external.files);
+      const detectionSource = [compilationSource, ...external.files.map(file => file.text ?? "")].join("\n");
       const resolver = new TeXDependencyResolver(settings.texLiveRoot, plan.executable);
       let effectivePreamble = basePreamble;
       let dependencyAttempts = 0;
@@ -141,7 +143,7 @@ export class RenderService {
 
       for (let attempt = 0; attempt < 4; attempt += 1) {
         dependencyAttempts += 1;
-        const document = buildDocument(compilationSource, settings, kind, effectivePreamble);
+        const document = buildDocument(compilationSource, settings, kind, effectivePreamble, plan.engine === "xelatex", detectionSource);
         await fs.writeFile(path.join(work, "main.tex"), document, "utf8");
 
         const compile = await this.runCompiler(plan.executable, compilerArgs("main.tex", work, plan.outputType, settings.shellEscape), work, settings.compileTimeout, sourcePath, external.files);
@@ -194,7 +196,6 @@ export class RenderService {
     const key = `${plan.executable}\n${font}`;
     const cached = this.fontProbeCache.get(key);
     if (cached?.ok) return;
-    if (cached && !cached.ok) throw new RenderError(cached.error ?? `Configured Persian font "${font}" could not be resolved by XeLaTeX.`);
 
     const probeDir = await fs.mkdtemp(path.join(os.tmpdir(), "tikz-font-probe-"));
     try {
@@ -212,7 +213,6 @@ export class RenderService {
       if (!result.ok || !await this.exists(path.join(probeDir, "probe.pdf"))) {
         const detail = [result.stderr, result.stdout, await this.readNamedLog(probeDir, "probe")].filter(Boolean).join("\n");
         const error = `Configured Persian font "${font}" is not available to XeLaTeX. Check the exact font family name in TeX Live/fontconfig.\n\n${detail}`;
-        this.fontProbeCache.set(key, { ok: false, error });
         throw new RenderError(error);
       }
       this.fontProbeCache.set(key, { ok: true });
@@ -379,21 +379,22 @@ export function selectEngine(source: string, settings: TikzSettings): EnginePlan
   return { engine, executable, outputType };
 }
 
-export function buildDocument(source: string, settings: TikzSettings, kind: BlockKind = "tikz", effectivePreamble = augmentPreamble(settings.preamble, source)): string {
+export function buildDocument(source: string, settings: TikzSettings, kind: BlockKind = "tikz", effectivePreamble = augmentPreamble(settings.preamble, source), forceXe = false, detectionSource = source): string {
   const body = source.trim();
-  if (isFullDocument(body)) return buildFullDocument(body, effectivePreamble);
-
-  const needsXe = /[\u0600-\u06ff]/u.test(`${effectivePreamble}\n${body}`) || /\\usepackage\s*\{\s*(?:xepersian|fontspec)\s*\}/u.test(`${effectivePreamble}\n${body}`);
-  const needsXepersian = needsXe && !/\\usepackage\s*\{\s*xepersian\s*\}/u.test(effectivePreamble) && /[\u0600-\u06ff]/u.test(body);
-  const language = needsXepersian && settings.persianFont.trim()
-    ? `\\usepackage{xepersian}\n\\settextfont{${escapeTex(settings.persianFont.trim())}}\n`
-    : needsXepersian
-      ? "\\usepackage{xepersian}\n"
-      : "";
+  const detectionText = `${effectivePreamble}\n${detectionSource}`;
+  const needsXe = forceXe || /[\\u0600-\\u06ff]/u.test(detectionText) || /\\usepackage\s*\{\s*(?:xepersian|fontspec)\s*\}/u.test(detectionText);
+  const hasArabicText = /[\\u0600-\\u06ff]/u.test(detectionText);
+  const language = needsXe && hasArabicText && !/\\usepackage\s*\{\s*xepersian\s*\}/u.test(effectivePreamble) && !/\\(?:settextfont|setlatintextfont|setmainfont|newfontfamily)\b/u.test(effectivePreamble)
+    ? settings.persianFont.trim()
+      ? `\\usepackage{xepersian}\n\\settextfont{${escapeTex(settings.persianFont.trim())}}\n`
+      : "\\usepackage{xepersian}\n"
+    : "";
+  const finalPreamble = language ? `${effectivePreamble.trimEnd()}\n${language}` : effectivePreamble;
+  if (isFullDocument(body)) return buildFullDocument(body, finalPreamble);
 
   const wrapped = wrapGraphicBody(body, kind);
   const documentClass = "standalone";
-  return `\\documentclass{${documentClass}}\n${effectivePreamble}\n${language}\\begin{document}\n${wrapped}\n\\end{document}\n`;
+  return `\\documentclass{${documentClass}}\n${finalPreamble}\n\\begin{document}\n${wrapped}\n\\end{document}\n`;
 }
 
 export function compilerArgs(tex: string, work: string, outputType: EnginePlan["outputType"] = "pdf", shellEscape: TikzSettings["shellEscape"] = "disabled"): string[] {
@@ -511,6 +512,7 @@ function extractExternalReferences(source: string): ExternalReference[] {
   add("bib", /\\bibliography\s*\{([^}]+)\}/gu);
   add("input", /\\lstinputlisting(?:\[[^\]]*\])?\s*\{([^}]+)\}/gu);
   add("package", /\\usepackage(?:\[[^\]]*\])?\{([^}]+)\}/gu);
+  add("package", /\\documentclass(?:\[[^\]]*\])?\{([^}]+)\}/gu);
   return result.map(item => ({ ...item, value: item.value.replace(/\\ /gu, " ") }));
 }
 
@@ -573,7 +575,6 @@ function buildTeXEnvironment(cwd: string, sourcePath: string | undefined, extern
     if (adapter instanceof FileSystemAdapter) {
       const root = adapter.getBasePath();
       dirs.add(path.join(root, path.dirname(normalizeVaultPath(sourcePath))));
-      dirs.add(root);
     }
   }
   const search = [...dirs].join(path.delimiter);
