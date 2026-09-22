@@ -83,6 +83,17 @@ export function augmentPreamble(preamble: string, source: string): string {
 
   if (packages.size === 0 && libraries.size === 0) return preamble;
 
+  let result = preamble.trimEnd();
+
+  // A few commands must come after the package that defines them. In
+  // particular, a full LaTeX document may already contain \\setmathfont in its
+  // preamble, so unicode-math must be inserted before that command rather than
+  // appended after it.
+  if (packages.has("unicode-math")) {
+    result = insertBeforeFirstMathCommand(result, "\\usepackage{unicode-math}");
+    packages.delete("unicode-math");
+  }
+
   const packageBlock = [...packages]
     .map((name) => `\\usepackage{${name}}`)
     .join("\n");
@@ -90,9 +101,16 @@ export function augmentPreamble(preamble: string, source: string): string {
     ? `\\usetikzlibrary{${[...libraries].join(",")}}`
     : "";
 
-  return [preamble.trimEnd(), packageBlock, libraryBlock]
+  return [result, packageBlock, libraryBlock]
     .filter(Boolean)
     .join("\n") + "\n";
+}
+
+function insertBeforeFirstMathCommand(preamble: string, packageLine: string): string {
+  const command = /\\(?:setmathfont|setmathfontface|unimathsetup)\\b/u;
+  const index = preamble.search(command);
+  if (index < 0) return preamble + "\n" + packageLine;
+  return preamble.slice(0, index) + packageLine + "\n" + preamble.slice(index);
 }
 
 function hasUsepackage(text: string, name: string): boolean {
