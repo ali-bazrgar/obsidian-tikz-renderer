@@ -88,7 +88,7 @@ export function augmentPreamble(preamble: string, source: string): string {
   // XePersian must remain the last package loaded. Insert automatically
   // detected packages before it, while keeping unicode-math before its
   // math-font commands.
-  const xepersianIndex = result.search(/\\usepackage\\s*\\[?[^\\]]*\\]?\\s*\\{\\s*xepersian\\s*\\}/u);
+  const xepersianIndex = result.search(/\\usepackage\s*\[?[^\]]*\]?\s*\{\s*xepersian\s*\}/u);
 
   if (packages.has("unicode-math")) {
     result = insertBeforeFirstMathCommand(result, "\\usepackage{unicode-math}", xepersianIndex);
@@ -123,7 +123,7 @@ function insertBeforeFirstMathCommand(preamble: string, packageLine: string, xep
 }
 
 function insertPackagesBeforeXePersian(preamble: string, packageBlock: string): string {
-  const match = /\\usepackage\\s*\\[?[^\\]]*\\]?\\s*\\{\\s*xepersian\\s*\\}/u.exec(preamble);
+  const match = /\\usepackage\s*\[?[^\]]*\]?\s*\{\s*xepersian\s*\}/u.exec(preamble);
   if (!match || match.index === undefined) return preamble + "\n" + packageBlock;
   return preamble.slice(0, match.index) + packageBlock + "\n" + preamble.slice(match.index);
 }
