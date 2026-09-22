@@ -20,8 +20,9 @@ export class TikzMarkdownProcessor {
     const historyKey = makeHistoryKey(ctx, section, kind, source);
     history.record(historyKey, source);
     try {
-      const result = await service.render(source, kind);
+      const result = await service.render(source, kind, ctx.sourcePath);
       if (!el.isConnected) return;
+      if (result.warning) new Notice(result.warning, 6000);
       result.assetPath = await exportService.saveSvg(result.svg, result.hash, ctx.sourcePath, false);
       if (section) await ensureSourceAssetLinks(app, ctx.sourcePath, section, result.assetPath, historyKey, kind);
       const edit = async (): Promise<void> => replaceSource(app, ctx, el, kind, source);

@@ -19,7 +19,10 @@ export interface TikzSettings {
   defaultZoom: number;
   keepTexSource: boolean;
   compileTimeout: number;
+  bestEffortOutput: boolean;
+  shellEscape: "disabled" | "restricted" | "enabled";
   persianFont: string;
+  persianFontPath: string;
   preamble: string;
   historyLimit: number;
 }
@@ -55,7 +58,10 @@ export const DEFAULT_SETTINGS: TikzSettings = {
   defaultZoom: 100,
   keepTexSource: false,
   compileTimeout: 30000,
+  bestEffortOutput: true,
+  shellEscape: "disabled",
   persianFont: "Vazirmatn",
+  persianFontPath: "",
   preamble: DEFAULT_PREAMBLE,
   historyLimit: 20,
 };

@@ -184,7 +184,7 @@ For example:
 ```
 ````
 
-The exact font must of course be installed and available to your TeX Live installation.
+The exact font must of course be installed and available to your TeX Live installation. In plugin settings you can enter either the exact font family name or a full path to a `.ttf`, `.otf`, or `.ttc` file. An explicit font-file path takes precedence over the family name. The **Test Persian font** button compiles a small XeLaTeX probe and reports the result.
 
 ## ⚙️ Rendering engines
 
@@ -206,6 +206,8 @@ xelatex
 lualatex
 dvilualatex
 ```
+
+`dvilualatex` is retained as a compatibility setting but is not used as an SVG backend because LuaTeX's extended DVI font references are not supported by `dvisvgm`. Select `lualatex` for LuaTeX documents.
 
 The plugin uses `dvisvgm` for direct DVI/XDV-to-SVG conversion where applicable. This keeps the normal vector rendering path independent of the PDF/Ghostscript compatibility chain.
 
@@ -339,6 +341,14 @@ If you installed the complete TeX Live distribution, most standard TikZ/PGF pack
 
 Install/configure `dvisvgm` and make sure the executable can be found through PATH or the plugin's executable settings.
 
+### Best-effort output
+
+Best-effort output is enabled by default. When TeX exits non-zero but the current compilation still produced a valid PDF/DVI/XDV artifact, the plugin attempts to convert that artifact to SVG and shows a warning instead of discarding it.
+
+### Shell escape
+
+Shell escape is disabled by default. `Restricted` and `Enabled` modes can be selected in settings for documents that require external command execution.
+
 ### `mutool` is missing
 
 `mutool` is only required for PDF-output engines such as `pdflatex` and `lualatex`.
@@ -349,11 +359,13 @@ The normal LaTeX/DVI and XeLaTeX/XDV paths do not require it.
 
 Use **Auto** or explicitly select XeLaTeX.
 
+The renderer now preflights the configured font with XeLaTeX before compiling a Persian figure. The `Persian font` setting should contain the exact family name recognized by your TeX installation, for example `Vazirmatn`.
+
 Check that:
 
 1. `xelatex` is correctly configured.
 2. `xepersian`/required packages are installed.
-3. The selected Persian/Arabic font is installed and recognized by TeX Live.
+3. The selected Persian/Arabic font is recognized by XeLaTeX/fontconfig.
 
 ### The figure is too large
 
@@ -362,6 +374,10 @@ Use Ctrl + mouse wheel to zoom out or use the figure controls to adjust the curr
 ### PNG looks different from the visible figure
 
 PNG export is designed to capture the current viewport. Before exporting, make sure the figure has the exact zoom, pan, viewport size, and appearance you want.
+
+## 📁 Project-relative LaTeX assets
+
+When a TikZ/LaTeX block references local files such as `\\input`, `\\include`, `\\includegraphics`, `\\addbibresource`, or `\\lstinputlisting`, the renderer resolves them relative to the note inside the vault, stages them into the temporary compilation directory, and tracks their contents in the SVG cache key. Nested TeX references are handled recursively within bounded file/size limits.
 
 ## 💻 Development
 

@@ -75,14 +75,14 @@ export class TeXDependencyResolver {
 
     // Generic missing .sty: this covers packages that are not known to our
     // static detector. kpsewhich decides whether the file is actually present.
-    for (const match of log.matchAll(/(?:File|file) [`']([^`']+\.sty)[`']\s+not found/giu)) {
+    for (const match of log.matchAll(/File\s+['"`]?([^'"`\s]+\.sty)['"`]?\s+not\s+found/giu)) {
       const file = match[1];
       const name = path.basename(file, ".sty");
       if (isSafeControlName(name)) candidates.push({ kind: "package", name, file });
     }
 
     // TikZ libraries are ordinary TeX files named tikzlibrary<name>.code.tex.
-    for (const match of log.matchAll(/(?:File|file) [`'](tikzlibrary[^`']+\.code\.tex)[`']\s+not found/giu)) {
+    for (const match of log.matchAll(/(?:I\s+can\'?t\s+find\s+file|File)\s+['"` ]?(tikzlibrary[^'"`\s]+\.code\.tex)['"`]?\s+not\s+found/giu)) {
       const file = match[1];
       const name = file.slice("tikzlibrary".length, -".code.tex".length);
       if (isSafeLibraryName(name)) candidates.push({ kind: "library", name, file });
@@ -97,8 +97,12 @@ export class TeXDependencyResolver {
       if (mapped) candidates.push(mapped);
     }
 
-    // The source is useful as a fallback when TeX reports an environment before
-    // it reaches the package's own error message.
+    const undefinedControl = log.match(/(?:^|\n)!?\s*Undefined\s+control\s+sequence[\s\S]{0,500}/iu)?.[0] ?? "";
+    for (const match of undefinedControl.matchAll(/\\([A-Za-z@]+)\b/gu)) {
+      const mapped = COMMAND_PACKAGES[match[1]];
+      if (mapped) candidates.push(mapped);
+    }
+
     for (const candidate of sourceHints(source)) candidates.push(candidate);
 
     return dedupe(candidates);
@@ -148,6 +152,16 @@ export class TeXDependencyResolver {
     return new RegExp(`\\\\usetikzlibrary\\{[^}]*\\b${escaped}\\b[^}]*\\}`, "u").test(preamble);
   }
 }
+
+const COMMAND_PACKAGES: Record<string, TeXDependency> = {
+  SI: { kind: "package", name: "siunitx", file: "siunitx.sty" },
+  num: { kind: "package", name: "siunitx", file: "siunitx.sty" },
+  ang: { kind: "package", name: "siunitx", file: "siunitx.sty" },
+  chemfig: { kind: "package", name: "chemfig", file: "chemfig.sty" },
+  ce: { kind: "package", name: "mhchem", file: "mhchem.sty" },
+  href: { kind: "package", name: "hyperref", file: "hyperref.sty" },
+  url: { kind: "package", name: "hyperref", file: "hyperref.sty" },
+};
 
 const ENVIRONMENT_PACKAGES: Record<string, TeXDependency> = {
   axis: { kind: "package", name: "pgfplots", file: "pgfplots.sty" },
