@@ -426,8 +426,8 @@ function extractDocumentPreamble(source: string): string {
 function buildFullDocument(body: string, effectivePreamble: string): string {
   const current = extractDocumentPreamble(body);
   if (current.trim() === effectivePreamble.trim()) return body.endsWith("\n") ? body : body + "\n";
-  const begin = body.search(/\\\\begin\\{document\\}/u);
-  const classMatch = /^\\\\documentclass(?:\\[[^\\]]*\\])?\\{[^}]+\\}\\s*/u.exec(body);
+  const begin = body.search(/\\begin\{document\}/u);
+  const classMatch = /^\\documentclass(?:\[[^\]]*\])?\{[^}]+\}\s*/u.exec(body);
   const start = classMatch ? classMatch[0].length : 0;
   const preamble = effectivePreamble.trim();
   return body.slice(0, start) + (preamble ? preamble + "\n" : "") + body.slice(begin);
