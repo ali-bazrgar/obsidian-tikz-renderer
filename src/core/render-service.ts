@@ -131,6 +131,7 @@ export class RenderService {
 
       const fullDocument = isFullDocument(source);
       const basePreamble = fullDocument ? extractDocumentPreamble(source) : augmentPreamble(settings.preamble, source);
+      const compilationSource = rewriteExternalReferences(source, sourcePath, external.files);
       const resolver = new TeXDependencyResolver(settings.texLiveRoot, plan.executable);
       let effectivePreamble = basePreamble;
       let dependencyAttempts = 0;
@@ -140,7 +141,7 @@ export class RenderService {
 
       for (let attempt = 0; attempt < 4; attempt += 1) {
         dependencyAttempts += 1;
-        const document = buildDocument(source, settings, kind, effectivePreamble);
+        const document = buildDocument(compilationSource, settings, kind, effectivePreamble);
         await fs.writeFile(path.join(work, "main.tex"), document, "utf8");
 
         const compile = await this.runCompiler(plan.executable, compilerArgs("main.tex", work, plan.outputType, settings.shellEscape), work, settings.compileTimeout, sourcePath, external.files);
@@ -294,8 +295,12 @@ export class RenderService {
     for (const file of files) {
       const destination = path.join(work, file.stagedPath);
       await fs.mkdir(path.dirname(destination), { recursive: true });
-      if (file.text !== undefined) await fs.writeFile(destination, file.text, "utf8");
-      else await fs.writeFile(destination, file.bytes);
+      if (file.text !== undefined) {
+        const rewritten = rewriteStagedText(file.text, file.vaultPath, file.stagedPath, files);
+        await fs.writeFile(destination, rewritten, "utf8");
+      } else {
+        await fs.writeFile(destination, file.bytes);
+      }
     }
   }
 
@@ -375,7 +380,7 @@ export function selectEngine(source: string, settings: TikzSettings): EnginePlan
 
 export function buildDocument(source: string, settings: TikzSettings, kind: BlockKind = "tikz", effectivePreamble = augmentPreamble(settings.preamble, source)): string {
   const body = source.trim();
-  if (isFullDocument(body)) return body.endsWith("\n") ? body : `${body}\n`;
+  if (isFullDocument(body)) return buildFullDocument(body, effectivePreamble);
 
   const needsXe = /[\u0600-\u06ff]/u.test(`${effectivePreamble}\n${body}`) || /\\usepackage\s*\{\s*(?:xepersian|fontspec)\s*\}/u.test(`${effectivePreamble}\n${body}`);
   const needsXepersian = needsXe && !/\\usepackage\s*\{\s*xepersian\s*\}/u.test(effectivePreamble) && /[\u0600-\u06ff]/u.test(body);
@@ -415,6 +420,16 @@ function extractDocumentPreamble(source: string): string {
   const classMatch = /^\\documentclass(?:\[[^\]]*\])?\{[^}]+\}\s*/u.exec(text);
   const start = classMatch ? classMatch[0].length : 0;
   return text.slice(start, begin).trim();
+}
+
+function buildFullDocument(body: string, effectivePreamble: string): string {
+  const current = extractDocumentPreamble(body);
+  if (current.trim() === effectivePreamble.trim()) return body.endsWith("\n") ? body : body + "\n";
+  const begin = body.search(/\\\\begin\\{document\\}/u);
+  const classMatch = /^\\\\documentclass(?:\\[[^\\]]*\\])?\\{[^}]+\\}\\s*/u.exec(body);
+  const start = classMatch ? classMatch[0].length : 0;
+  const preamble = effectivePreamble.trim();
+  return body.slice(0, start) + (preamble ? preamble + "\\n" : "") + body.slice(begin);
 }
 
 function escapeTex(value: string): string { return value.replace(/[{}%\\]/g, "\\$&"); }
