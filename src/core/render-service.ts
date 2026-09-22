@@ -444,7 +444,7 @@ export function compilerArgs(tex: string, work: string, outputType: EnginePlan["
 }
 
 function normalizeLatexSource(source: string): string {
-  return source.replace(/^([ \t]*)\[[ \t]*\r?\n([\\s\\S]*?)\r?\n\\1\][ \t]*$/gmu, (whole, indent: string, inner: string, trailing: string) => {
+  return source.replace(/^([ \t]*)\[[ \t]*\r?\n([\s\S]*?)\r?\n\\1\][ \t]*$/gmu, (whole, indent: string, inner: string, trailing: string) => {
     if (!/(?:\\\\(?:frac|dfrac|tfrac|sqrt|sum|prod|int|lim|left|right|text|mathrm|mathbf|operatorname|begin\\{|end\\{)|[_^]|[=<>])/.test(inner)) return whole;
     return indent + "\\[\n" + inner + "\n" + indent + "\\]" + trailing;
   });
