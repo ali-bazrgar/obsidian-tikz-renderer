@@ -79,6 +79,18 @@ export class RenderService {
     try { return await task; } finally { this.inFlight.delete(hash); }
   }
 
+  async testPersianFont(): Promise<{ ok: boolean; message: string }> {
+    const settings = this.getSettings();
+    try {
+      const font = getPersianFontSelection(settings);
+      if (!font) return { ok: false, message: "No Persian font family or font file is configured." };
+      const plan: EnginePlan = { engine: "xelatex", executable: settings.xelatexPath, outputType: "xdv" };
+      await this.validateConfiguredFontIfNeeded("سلام", settings, plan, true);
+      return { ok: true, message: "Persian font is available: " + font.value + (font.path ? " (" + font.path + ")" : "") };
+    } catch (error) {
+      return { ok: false, message: error instanceof Error ? error.message : String(error) };
+    }
+  }
   async clearCache(): Promise<void> { await fs.rm(this.cacheRoot(), { recursive: true, force: true }); }
 
   async testInstallation(): Promise<{ summary: string; results: Awaited<ReturnType<typeof probeAllExecutables>> }> {
@@ -188,21 +200,24 @@ export class RenderService {
     }
   }
 
-  private async validateConfiguredFontIfNeeded(source: string, settings: TikzSettings, plan: EnginePlan): Promise<void> {
-    if (plan.engine !== "xelatex" || !/[؀-ۿ]/u.test(source)) return;
-    if (/\\(?:settextfont|setlatintextfont|setmainfont|newfontfamily)\b/u.test(source)) return;
-    const font = settings.persianFont.trim();
+  private async validateConfiguredFontIfNeeded(source: string, settings: TikzSettings, plan: EnginePlan, force = false): Promise<void> {
+    if (plan.engine !== "xelatex" || (!force && !/[\u0600-\u06ff]/u.test(source))) return;
+    if (!force && /\\(?:settextfont|setlatintextfont|setmainfont|newfontfamily)\b/u.test(settings.preamble + "\n" + source)) return;
+    const font = getPersianFontSelection(settings);
     if (!font) return;
-    const key = `${plan.executable}\n${font}`;
+    const key = [plan.executable, font.value, font.path ?? ""].join("\n");
     const cached = this.fontProbeCache.get(key);
     if (cached?.ok) return;
-
+    if (font.path) {
+      const stat = await fs.stat(font.path).catch(() => undefined);
+      if (!stat?.isFile()) throw new RenderError("Configured Persian font file does not exist: " + font.path);
+    }
     const probeDir = await fs.mkdtemp(path.join(os.tmpdir(), "tikz-font-probe-"));
     try {
       const probe = [
         "\\documentclass{article}",
         "\\usepackage{xepersian}",
-        `\\settextfont{${escapeTex(font)}}`,
+        font.command,
         "\\begin{document}",
         "سلام",
         "\\end{document}",
@@ -212,15 +227,13 @@ export class RenderService {
       const result = await this.runCompiler(plan.executable, ["-interaction=nonstopmode", "-halt-on-error", "-file-line-error", "-no-shell-escape", "-output-directory", probeDir, "probe.tex"], probeDir, settings.compileTimeout);
       if (!result.ok || !await this.exists(path.join(probeDir, "probe.pdf"))) {
         const detail = [result.stderr, result.stdout, await this.readNamedLog(probeDir, "probe")].filter(Boolean).join("\n");
-        const error = `Configured Persian font "${font}" is not available to XeLaTeX. Check the exact font family name in TeX Live/fontconfig.\n\n${detail}`;
-        throw new RenderError(error);
+        throw new RenderError("Configured Persian font " + font.value + " is not available to XeLaTeX. Check the exact family name or font file path.\n\n" + detail);
       }
       this.fontProbeCache.set(key, { ok: true });
     } finally {
       await fs.rm(probeDir, { recursive: true, force: true }).catch(() => undefined);
     }
   }
-
   private async convertToSvg(input: string, outputType: EnginePlan["outputType"], work: string, settings: TikzSettings): Promise<string> {
     const output = path.join(work, "main.svg");
     if (outputType === "pdf") {
@@ -244,6 +257,7 @@ export class RenderService {
         outputType: plan.outputType,
         preamble: augmentPreamble(settings.preamble, source),
         font: settings.persianFont,
+        fontPath: settings.persianFontPath,
         dvisvgm: settings.dvisvgmPath,
         mutool: settings.mutoolPath,
         shellEscape: settings.shellEscape,
@@ -379,6 +393,29 @@ export function selectEngine(source: string, settings: TikzSettings): EnginePlan
   return { engine, executable, outputType };
 }
 
+interface PersianFontSelection {
+  value: string;
+  path?: string;
+  command: string;
+}
+
+function getPersianFontSelection(settings: TikzSettings): PersianFontSelection | undefined {
+  const explicitPath = settings.persianFontPath.trim();
+  if (explicitPath) {
+    const resolved = path.resolve(explicitPath);
+    const slashPath = resolved.replace(/\\/gu, "/");
+    const filename = path.posix.basename(slashPath);
+    const directory = path.posix.dirname(slashPath);
+    if (!/\.(?:ttf|otf|ttc)$/iu.test(filename)) throw new RenderError("Persian font file must be a .ttf, .otf or .ttc file.");
+    const pathOption = directory && directory !== "."
+      ? "[Path={" + escapeTex(directory.endsWith("/") ? directory : directory + "/") + "}]"
+      : "";
+    return { value: filename, path: resolved, command: "\\settextfont" + pathOption + "{" + escapeTex(filename) + "}" };
+  }
+  const family = settings.persianFont.trim();
+  if (!family) return undefined;
+  return { value: family, command: "\\settextfont{" + escapeTex(family) + "}" };
+}
 export function buildDocument(source: string, settings: TikzSettings, kind: BlockKind = "tikz", effectivePreamble = augmentPreamble(settings.preamble, source), forceXe = false, detectionSource = source): string {
   const body = source.trim();
   const detectionText = `${effectivePreamble}\n${detectionSource}`;
