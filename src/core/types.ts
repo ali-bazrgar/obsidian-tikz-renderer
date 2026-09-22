@@ -16,6 +16,7 @@ export interface RenderResult {
   source: string;
   kind: BlockKind;
   assetPath?: string;
+  warning?: string;
 }
 
 export interface InstallationResult {
