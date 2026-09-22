@@ -56,6 +56,7 @@ if (!settings.includes("bestEffortOutput: boolean")) throw new Error("Best-effor
 if (!settings.includes('shellEscape: "disabled" | "restricted" | "enabled"')) throw new Error("Shell-escape setting is missing.");
 if (!settings.includes("bestEffortOutput: true")) throw new Error("Best-effort default is missing.");
 if (!settings.includes('shellEscape: "disabled"')) throw new Error("Safe shell-escape default is missing.");
+if (!settings.includes("persianFontPath: string")) throw new Error("Persian font file path setting is missing.");
 
 const types = await readFile("src/core/types.ts", "utf8");
 if (!types.includes("warning?: string")) throw new Error("RenderResult warning field is missing.");
