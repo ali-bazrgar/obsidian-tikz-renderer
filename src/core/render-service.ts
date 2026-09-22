@@ -143,7 +143,9 @@ export class RenderService {
       await this.stageExternalDependencies(external.files, work);
 
       const fullDocument = isFullDocument(source);
-      const basePreamble = fullDocument ? extractDocumentPreamble(source) : augmentPreamble(settings.preamble, source);
+      const basePreamble = fullDocument
+        ? augmentPreamble(extractDocumentPreamble(source), source)
+        : augmentPreamble(settings.preamble, source);
       const compilationSource = rewriteExternalReferences(source, sourcePath, external.files);
       const detectionSource = [compilationSource, ...external.files.map(file => file.text ?? "")].join("\n");
       const resolver = new TeXDependencyResolver(settings.texLiveRoot, plan.executable);
