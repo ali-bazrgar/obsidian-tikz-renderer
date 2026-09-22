@@ -82,7 +82,7 @@ export class TeXDependencyResolver {
     }
 
     // TikZ libraries are ordinary TeX files named tikzlibrary<name>.code.tex.
-    for (const match of log.matchAll(/(?:I\s+can\'?t\s+find\s+file|File)\s+['"` ]?(tikzlibrary[^'"`\s]+\.code\.tex)['"`]?\s+not\s+found/giu)) {
+    for (const match of log.matchAll(/(?:I\s+can'?t\s+find\s+file|File)\s+['"` ]?(tikzlibrary[^'"`\s]+\.code\.tex)['"`]?\s+not\s+found/giu)) {
       const file = match[1];
       const name = file.slice("tikzlibrary".length, -".code.tex".length);
       if (isSafeLibraryName(name)) candidates.push({ kind: "library", name, file });
