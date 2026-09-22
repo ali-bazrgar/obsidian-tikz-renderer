@@ -23,6 +23,7 @@ export interface TikzSettings {
   shellEscape: "disabled" | "restricted" | "enabled";
   persianFont: string;
   persianFontPath: string;
+  persianFontPath: string;
   preamble: string;
   historyLimit: number;
 }
@@ -61,6 +62,7 @@ export const DEFAULT_SETTINGS: TikzSettings = {
   bestEffortOutput: true,
   shellEscape: "disabled",
   persianFont: "Vazirmatn",
+  persianFontPath: "",
   persianFontPath: "",
   preamble: DEFAULT_PREAMBLE,
   historyLimit: 20,
