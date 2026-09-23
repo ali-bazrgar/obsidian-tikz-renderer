@@ -37,6 +37,18 @@ if (renderer.includes("ensureGlobalPointerListeners") || renderer.includes("poin
   throw new Error("Renderer must not use global pointer-event workarounds for lifecycle synchronization.");
 }
 if (renderer.includes("svgDataUri")) throw new Error("Renderer must not use SVG data URIs.");
+if (renderer.includes("previous.dispose") || renderer.includes("dispose(false)")) {
+  throw new Error("Read and Write renderer instances must coexist; do not dispose sibling views.");
+}
+if (!renderer.includes("function rendererHostIsWritable") || !renderer.includes("function rendererHostIsVisible")) {
+  throw new Error("Writable/visible host helpers are missing.");
+}
+if (!renderer.includes("if (!isWritableHost()) return;")) {
+  throw new Error("Menu/wheel interactions must key off the host container, not a cached readingMode flag.");
+}
+if (renderer.includes("if (readingMode || controls.hidden) return") || renderer.includes("controls.hidden = nextReadingMode")) {
+  throw new Error("Menu open path must not abort on stale readingMode/hidden flags.");
+}
 
 const processor = await readFile("src/markdown/code-block.ts", "utf8");
 if (!processor.includes("service.render(source, kind, ctx.sourcePath)")) throw new Error("Markdown renderer must pass the note path into RenderService.");
@@ -85,7 +97,7 @@ if (!types.includes("warning?: string")) throw new Error("RenderResult warning f
 const lock = JSON.parse(await readFile("package-lock.json", "utf8"));
 const manifest = JSON.parse(await readFile("manifest.json", "utf8"));
 const pkg = JSON.parse(await readFile("package.json", "utf8"));
-if (manifest.version !== pkg.version || pkg.version !== "0.1.6") throw new Error("Plugin versions are not synchronized at 0.1.6.");
+if (manifest.version !== pkg.version || pkg.version !== "0.1.7") throw new Error("Plugin versions are not synchronized at 0.1.7.");
 if (lock.version !== pkg.version || lock.packages?.[""]?.version !== pkg.version) throw new Error("package-lock.json version is out of sync.");
 
 const css = await readFile("styles.css", "utf8");
@@ -93,6 +105,7 @@ const compactCss = css.replace(/\s+/g, "");
 if (!compactCss.includes('.tikz-renderer-panel[hidden]{display:none!important}')) throw new Error("Popup hidden-state CSS is missing.");
 if (!compactCss.includes("opacity:1!important")) throw new Error("TikZ figure opacity guard is missing.");
 if (!css.includes('.markdown-preview-view a.tikz-generated-asset-link') || !css.includes('display:none!important')) throw new Error("Reading-view generated SVG link hiding is missing.");
+if (!compactCss.includes(".markdown-source-view .tikz-renderer-shell .tikz-renderer-controls".replace(/\s+/g, ""))) throw new Error("Write-mode control visibility override is missing.");
 
 const detector = await readFile("src/core/tex-package-detector.ts", "utf8");
 if (!detector.includes('"amsthm"') || !detector.includes('"hyperref"') || !detector.includes('"mhchem"') || !detector.includes('"unicode-math"') || !detector.includes("insertBeforeFirstMathCommand")) throw new Error("Expanded LaTeX package detection is missing.");
@@ -103,3 +116,4 @@ if (!resolver.includes("Undefined\\s+control\\s+sequence")) throw new Error("Und
 if (!resolver.includes("tikzlibrary") || !resolver.includes("not\\s+found")) throw new Error("TikZ library missing-file parsing is missing.");
 
 console.log("Build artifacts and rendering-pipeline invariants verified.");
+await import("../tests/renderer-lifecycle.mjs");
