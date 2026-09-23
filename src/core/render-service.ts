@@ -13,7 +13,7 @@ import { augmentPreamble } from "./tex-package-detector";
 import { TeXDependencyResolver, TeXDependency } from "./tex-dependency-resolver";
 
 const execFileAsync = promisify(execFile);
-const PIPELINE_VERSION = "17-xdv-via-xdvipdfmx-pattern-preserving";
+const PIPELINE_VERSION = "18-xdv-pattern-driver-direct";
 const MAX_OUTPUT = 4 * 1024 * 1024;
 const MAX_DEPENDENCY_FILES = 200;
 const MAX_DEPENDENCY_TOTAL_BYTES = 200 * 1024 * 1024;
@@ -149,7 +149,8 @@ export class RenderService {
       const compilationSource = normalizeLatexSource(rewriteExternalReferences(source, sourcePath, external.files));
       const detectionSource = [compilationSource, ...external.files.map(file => file.text ?? "")].join("\n");
       const resolver = new TeXDependencyResolver(settings.texLiveRoot, plan.executable);
-      let effectivePreamble = basePreamble;
+      const useDvisvgmPatternDriver = plan.outputType === "xdv" && hasTikzPatterns(detectionSource);
+      let effectivePreamble = useDvisvgmPatternDriver ? withDvisvgmPatternDriver(basePreamble) : basePreamble;
       let dependencyAttempts = 0;
       let bestEffortWarning: string | undefined;
 
@@ -169,22 +170,20 @@ export class RenderService {
         const artifactExists = await this.exists(input);
 
         if (compile.ok) {
-          const preferPatternPreservingConverter = hasTikzPatterns(detectionSource);
-          const svg = await this.convertToSvg(input, plan.outputType, work, settings, preferPatternPreservingConverter);
+          const svg = await this.convertToSvg(input, plan.outputType, work, settings, useDvisvgmPatternDriver);
           await fs.writeFile(cached, svg, "utf8");
           return { hash, svg, engine: plan.engine, fromCache: false, source, kind };
         }
 
         const resolved = await resolver.resolveFromLog(source, effectivePreamble, log);
         if (resolved.added.length > 0 && resolved.preamble !== effectivePreamble && attempt < 3) {
-          effectivePreamble = resolved.preamble;
+          effectivePreamble = useDvisvgmPatternDriver ? withDvisvgmPatternDriver(resolved.preamble) : resolved.preamble;
           continue;
         }
 
         if (settings.bestEffortOutput && artifactExists) {
           try {
-            const preferPatternPreservingConverter = hasTikzPatterns(detectionSource);
-            const svg = await this.convertToSvg(input, plan.outputType, work, settings, preferPatternPreservingConverter);
+            const svg = await this.convertToSvg(input, plan.outputType, work, settings, useDvisvgmPatternDriver);
             await fs.writeFile(cached, svg, "utf8");
             bestEffortWarning = `TeX exited with code ${compile.exitCode ?? "non-zero"}, but a valid ${extension.toUpperCase()} artifact was produced and converted successfully.`;
             return { hash, svg, engine: plan.engine, fromCache: false, source, kind, warning: bestEffortWarning };
@@ -243,58 +242,48 @@ export class RenderService {
     outputType: EnginePlan["outputType"],
     work: string,
     settings: TikzSettings,
-    preferPatternPreservingConverter = false,
+    preferDvisvgmPatternDriver = false,
   ): Promise<string> {
     const output = path.join(work, "main.svg");
 
     if (outputType === "pdf") {
       await this.convertPdfToSvg(input, output, work, settings);
     } else if (outputType === "xdv") {
-      // XeLaTeX produces XDV. XDV is not ordinary DVI, and passing it
-      // directly through dvisvgm can yield incorrect glyph/pattern output
-      // on Windows builds. Convert XDV with xdvipdfmx first, then use the
-      // same PDF->SVG path used by PDF engines.
+      // XeLaTeX produces XDV. For ordinary documents, keep the stable
+      // XDV -> xdvipdfmx -> PDF -> MuPDF SVG path. For TikZ pattern
+      // documents, compile with PGF's dvisvgm driver and let dvisvgm
+      // consume the XDV directly so PGF can emit native SVG <pattern>
+      // definitions instead of relying on PDF tiling-pattern recovery.
+      if (preferDvisvgmPatternDriver) {
+        const dvisvgm = settings.dvisvgmPath.trim() || "dvisvgm";
+        try {
+          await this.runStrict(dvisvgm, ["--exact-bbox", "--no-fonts=1", "--verbosity=0", input, "-o", output], work, settings.compileTimeout);
+          if (!await this.exists(output)) {
+            for (const candidate of [path.join(work, "main-1.svg"), path.join(work, "main-01.svg")]) {
+              if (await this.exists(candidate)) { await fs.rename(candidate, output); break; }
+            }
+          }
+          if (await this.exists(output)) {
+            const candidate = await fs.readFile(output, "utf8");
+            if (/<svg\\b/i.test(candidate) && /<pattern\\b/i.test(candidate) && /url\\(#/i.test(candidate)) {
+              return sanitizeSvg(candidate);
+            }
+            await fs.rm(output, { force: true }).catch(() => undefined);
+          }
+        } catch {
+          // Fall through to the normal XDV -> PDF -> SVG path below.
+        }
+      }
+
       const xdvipdfmx = resolveSiblingExecutable(settings.xelatexPath, "xdvipdfmx");
       const pdf = path.join(work, "main-from-xdv.pdf");
       try {
         await this.runStrict(xdvipdfmx, ["-o", pdf, input], work, settings.compileTimeout);
         if (!await this.exists(pdf)) throw new RenderError("xdvipdfmx completed without producing a PDF file.");
         await this.convertPdfToSvg(pdf, output, work, settings);
-
-        // TikZ patterns are represented as PDF tiling patterns. Some PDF-to-SVG
-        // writers flatten those fills instead of preserving an SVG pattern.
-        // Only documents that actually use TikZ patterns get this narrow
-        // secondary conversion attempt; every other render keeps the normal
-        // MuPDF path unchanged.
-        if (preferPatternPreservingConverter) {
-          const currentSvg = await fs.readFile(output, "utf8").catch(() => "");
-          if (!/<pattern\b/i.test(currentSvg)) {
-            const patternSvg = path.join(work, "main-patterns.svg");
-            const dvisvgm = settings.dvisvgmPath.trim() || "dvisvgm";
-            try {
-              await this.runStrict(
-                dvisvgm,
-                ["--pdf", "--no-fonts=1", "--verbosity=0", pdf, "-o", patternSvg],
-                work,
-                settings.compileTimeout,
-              );
-              if (await this.exists(patternSvg)) {
-                const candidate = await fs.readFile(patternSvg, "utf8");
-                if (/<pattern\b/i.test(candidate) && /url\(#/i.test(candidate)) {
-                  await fs.rename(patternSvg, output).catch(async () => {
-                    await fs.copyFile(patternSvg, output);
-                    await fs.rm(patternSvg, { force: true }).catch(() => undefined);
-                  });
-                }
-              }
-            } catch {
-              // Keep the already-valid MuPDF SVG when this optional path fails.
-            }
-          }
-        }
       } catch (xdvError) {
-        // Keep the dvisvgm path as a compatibility fallback so existing
-        // installations/features are not removed if xdvipdfmx is unavailable.
+        // Keep the direct dvisvgm compatibility fallback when the XDV->PDF
+        // route is unavailable.
         let dvisvgmError: unknown = undefined;
         const dvisvgm = settings.dvisvgmPath.trim() || "dvisvgm";
         try {
@@ -687,7 +676,12 @@ function resolveSiblingExecutable(configured: string, name: string): string {
 function escapeTex(value: string): string { return value.replace(/[{}%\\]/g, "\\$&"); }
 
 function hasTikzPatterns(source: string): boolean {
-  return /(?:\\(?:fill|filldraw|path|draw)\b[^\n\r]*\bpattern\s*=|\\begin\{tikzpicture\}[\s\S]*\bpattern\s*=|pattern\s*=)/iu.test(source);
+  return /(?:\bpattern\s*=|\bpattern color\b|\\usetikzlibrary\s*\{[^}]*\bpatterns\b[^}]*\})/iu.test(source);
+}
+
+function withDvisvgmPatternDriver(preamble: string): string {
+  if (/\\def\s*\pgfsysdriver\s*\{\s*pgfsys-dvisvgm\.def\s*\}/u.test(preamble)) return preamble;
+  return `\\def\\pgfsysdriver{pgfsys-dvisvgm.def}\n${preamble}`;
 }
 
 function sanitizeSvg(svg: string): string {
