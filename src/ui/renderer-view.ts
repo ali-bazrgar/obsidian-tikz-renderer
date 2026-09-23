@@ -14,6 +14,10 @@ export class TikzRendererView extends MarkdownRenderChild {
   private applyExternalState?: (state: TikzViewState) => void;
   private static readonly activeViews = new Map<string, TikzRendererView>();
   private static readonly allViews = new Set<TikzRendererView>();
+  private static wheelWindow?: Window;
+  private static wheelHandler?: (event: WheelEvent) => void;
+  private wheelViewport?: HTMLElement;
+  private wheelCallback?: (event: WheelEvent) => void;
   private static readonly viewStates = new Map<string, TikzViewState>();
   private static readonly themeStates = new Map<string, TikzThemeState>();
 
@@ -51,16 +55,16 @@ export class TikzRendererView extends MarkdownRenderChild {
     let zoom = initialEditState.zoom, panX = initialEditState.panX, panY = initialEditState.panY, naturalWidth = 0, naturalHeight = 0, viewportHeight = initialEditState.viewportHeight, dragging = false, lastX = 0, lastY = 0;
     let readingMode = false;
     const getCurrentMode = (): "reading" | "writing" => {
-      // Prefer Obsidian's own MarkdownView mode. This remains authoritative
-      // while switching between Reading View and Write/Live Preview, even when
-      // the DOM is temporarily being rebuilt.
-      const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
-      if (markdownView?.getMode() === "preview") return "reading";
-      if (markdownView?.getMode() === "source") return "writing";
+      // Determine the mode from the renderer's own containing Obsidian view
+      // first. During a Read/Write transition, the active MarkdownView can
+      // briefly report the previous mode while this render child is already
+      // attached to the new view.
+      if (shell.closest(".markdown-source-view")) return "writing";
+      if (shell.closest(".markdown-preview-view")) return "reading";
 
-      // Fallback for embedded/non-active rendering contexts where there is no
-      // active MarkdownView available.
-      return shell.closest(".markdown-preview-view") ? "reading" : "writing";
+      // Fallback for an embedded/non-active rendering context.
+      const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
+      return markdownView?.getMode() === "preview" ? "reading" : "writing";
     };
     const isReadingMode = (): boolean => getCurrentMode() === "reading";
     const closePanel = (): void => { panel.hidden = true; menu.setAttribute("aria-expanded", "false"); menu.removeAttribute("data-open"); };
@@ -209,17 +213,9 @@ export class TikzRendererView extends MarkdownRenderChild {
       persistViewState();
       applyZoom();
     };
-    // Listen on the stable window object in capture phase. Obsidian can
-    // rebuild/reparent the editor DOM during Read/Write transitions, but the
-    // window remains the same and receives the wheel event before CodeMirror.
-    const windowWheel = (e: WheelEvent): void => {
-      if (!shell.isConnected || isReadingMode()) return;
-      const path = typeof e.composedPath === "function" ? e.composedPath() : [];
-      const target = e.target;
-      if (!(target instanceof Node) || (!viewport.contains(target) && !path.includes(viewport))) return;
-      wheel(e);
-    };
-    win?.addEventListener("wheel", windowWheel, { passive: false, capture: true });
+    this.wheelViewport = viewport;
+    this.wheelCallback = wheel;
+    TikzRendererView.ensureGlobalWheelListener(win);
     const observer = new MutationObserver(() => { const changed = updateMode(); if (changed) applyZoom(); else { applyTheme(); positionPanel(); } }); observer.observe(doc.body, { attributes: true, attributeFilter: ["class"], subtree: true });
     const resizeObserver = new ResizeObserver(() => {
       ensureViewportSize();
@@ -229,11 +225,62 @@ export class TikzRendererView extends MarkdownRenderChild {
     const reposition = (): void => positionPanel(); win?.addEventListener("scroll", reposition, true); win?.addEventListener("resize", reposition);
     buildMainPanel(); closePanel(); updateMode(); applyTheme(); ensureIntrinsicSize(); ensureViewportSize(); applyZoom();
     this.applyExternalState = (state: TikzViewState): void => { if (!isReadingMode()) applyLocalViewState(state); };
-    this.cleanup = () => { if (TikzRendererView.activeViews.get(stateKey) === this) TikzRendererView.activeViews.delete(stateKey); doc.removeEventListener("pointerdown", outsidePointerDown, true); doc.removeEventListener("keydown", escape, true); menu.removeEventListener("pointerdown", togglePanel); win?.removeEventListener("wheel", windowWheel, true); win?.removeEventListener("scroll", reposition, true); win?.removeEventListener("resize", reposition); observer.disconnect(); resizeObserver.disconnect(); closePanel(); panel.remove(); TikzRendererView.allViews.delete(this); this.applyExternalState = undefined; this.cleanup = undefined; };
+    this.cleanup = () => { if (TikzRendererView.activeViews.get(stateKey) === this) TikzRendererView.activeViews.delete(stateKey); doc.removeEventListener("pointerdown", outsidePointerDown, true); doc.removeEventListener("keydown", escape, true); menu.removeEventListener("pointerdown", togglePanel); this.wheelViewport = undefined; this.wheelCallback = undefined; TikzRendererView.removeGlobalWheelListenerIfUnused(); win?.removeEventListener("scroll", reposition, true); win?.removeEventListener("resize", reposition); observer.disconnect(); resizeObserver.disconnect(); closePanel(); panel.remove(); TikzRendererView.allViews.delete(this); this.applyExternalState = undefined; this.cleanup = undefined; };
   }
   onunload(): void { this.cleanup?.(); this.containerEl.empty(); }
   dispose(emptyContainer = true): void { this.cleanup?.(); if (emptyContainer && this.containerEl.isConnected) this.containerEl.empty(); }
-  static disposeAll(): void { for (const view of Array.from(this.allViews)) view.dispose(true); this.activeViews.clear(); this.allViews.clear(); }
+  private static ensureGlobalWheelListener(win: Window | null): void {
+    if (!win || this.wheelHandler) return;
+    this.wheelWindow = win;
+    this.wheelHandler = (event: WheelEvent): void => {
+      if (event.defaultPrevented) return;
+
+      // First prefer the actual event path. This is the normal case.
+      const path = typeof event.composedPath === "function" ? event.composedPath() : [];
+      for (const view of Array.from(this.allViews).reverse()) {
+        if (!view.wheelViewport || !view.wheelViewport.isConnected) continue;
+        if (path.includes(view.wheelViewport)) {
+          view.wheelCallback?.(event);
+          return;
+        }
+      }
+
+      // During an Obsidian Read/Write transition, CodeMirror/Obsidian may be
+      // the event target even though the pointer is visually over the figure.
+      // Use the viewport's screen geometry as a fallback instead of assuming
+      // that the event target must be a descendant of the viewport.
+      const x = event.clientX;
+      const y = event.clientY;
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+
+      const candidates = Array.from(this.allViews).filter(view => {
+        const element = view.wheelViewport;
+        if (!element || !element.isConnected) return false;
+        const rect = element.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0 && x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+      }).reverse();
+
+      for (const view of candidates) {
+        view.wheelCallback?.(event);
+        if (event.defaultPrevented) return;
+      }
+    };
+    win.addEventListener("wheel", this.wheelHandler, { passive: false, capture: true });
+  }
+
+  private static removeGlobalWheelListenerIfUnused(): void {
+    if (this.allViews.size > 0 || !this.wheelWindow || !this.wheelHandler) return;
+    this.wheelWindow.removeEventListener("wheel", this.wheelHandler, true);
+    this.wheelWindow = undefined;
+    this.wheelHandler = undefined;
+  }
+
+  static disposeAll(): void {
+    for (const view of Array.from(this.allViews)) view.dispose(true);
+    this.activeViews.clear();
+    this.allViews.clear();
+    this.removeGlobalWheelListenerIfUnused();
+  }
 }
 
 function createRenderedSvgSnapshot(svg: SVGSVGElement, win: Window | null): string {
