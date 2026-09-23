@@ -20,7 +20,7 @@ const rendererChecks = [
   ['win?.addEventListener("wheel", wheel, { passive: false, capture: true })', "capture-phase wheel handling"],
   ['this.result.assetPath = await this.exportService.saveSvg', "SVG asset persistence"],
   ['svg.addEventListener("click", e => { e.preventDefault(); e.stopPropagation(); })', "non-clickable inline SVG"],
-  ['const isReadingMode = (): boolean => !!shell.closest(".markdown-preview-view")', "Reading mode detection"],
+  ['const getCurrentMode = (): "reading" | "writing" => {', "Reading/Write mode detection"],
   ['shell.dataset.mode = nextReadingMode ? "reading" : "writing"', "Reading/Writing mode state"],
   ['this.service.render(this.source, this.kind, this.sourcePath)', "source-path-aware re-render"],
 ];
