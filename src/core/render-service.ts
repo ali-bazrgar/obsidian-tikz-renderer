@@ -248,7 +248,7 @@ export class RenderService {
       const captureArgs = ["draw", "-q", "-F", "svg", "-O", "text=path,no-reuse-images", "-o", "-", input, "1"];
       const captured = await this.runCapture(mutool, captureArgs, work, settings.compileTimeout);
       const stdout = String(captured.stdout ?? "");
-      const svgStart = stdout.search(/<svg\\b/i);
+      const svgStart = stdout.search(/<svg\b/i);
       if (svgStart >= 0) await fs.writeFile(output, stdout.slice(svgStart), "utf8");
 
       if (!await this.exists(output)) {
@@ -311,7 +311,7 @@ export class RenderService {
             const captureArgs = ["draw", "-q", "-F", "svg", "-O", "text=path,no-reuse-images", "-o", "-", pdf, "1"];
             const captured = await this.runCapture(mutool, captureArgs, work, settings.compileTimeout);
             const stdout = String(captured.stdout ?? "");
-            const svgStart = stdout.search(/<svg\\b/i);
+            const svgStart = stdout.search(/<svg\b/i);
             if (svgStart >= 0) await fs.writeFile(output, stdout.slice(svgStart), "utf8");
 
             if (!await this.exists(output)) {
