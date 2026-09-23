@@ -419,7 +419,7 @@ function getPersianFontSelection(settings: TikzSettings): PersianFontSelection |
   return { value: family, command: "\\settextfont{" + escapeTex(family) + "}" };
 }
 export function buildDocument(source: string, settings: TikzSettings, kind: BlockKind = "tikz", effectivePreamble = augmentPreamble(settings.preamble, source), forceXe = false, detectionSource = source): string {
-  const body = source.trim();
+  const body = stripMarkdownFences(source.trim());
   const detectionText = `${effectivePreamble}\n${detectionSource}`;
   const needsXe = forceXe || /[\u0600-\u06ff]/u.test(detectionText) || /\\usepackage\s*\{\s*(?:xepersian|fontspec)\s*\}/u.test(detectionText);
   const hasArabicText = /[\u0600-\u06ff]/u.test(detectionText);
@@ -472,15 +472,25 @@ function extractDocumentPreamble(source: string): string {
 }
 
 function buildFullDocument(body: string, effectivePreamble: string): string {
-  const current = extractDocumentPreamble(body);
-  if (current.trim() === effectivePreamble.trim()) return body.endsWith("\n") ? body : body + "\n";
-  const begin = body.search(/\\begin\{document\}/u);
-  const classMatch = /^\\documentclass(?:\[[^\]]*\])?\{[^}]+\}\s*/u.exec(body);
+  const beginMatch = /\\\\begin\\{document\\}/u.exec(body);
+  const endIndex = body.lastIndexOf("\\\\end{document}");
+  if (!beginMatch || endIndex < 0 || endIndex <= beginMatch.index) return body.endsWith("\\n") ? body : body + "\\n";
+
+  const classMatch = /^\\\\documentclass(?:\\[[^\\]]*\\])?\\{[^}]+\\}\\s*/u.exec(body);
   const start = classMatch ? classMatch[0].length : 0;
   const preamble = effectivePreamble.trim();
-  return body.slice(0, start) + (preamble ? preamble + "\n" : "") + body.slice(begin);
-}
 
+  const previewPreamble = /\\\\usepackage(?:\\[[^\\]]*\\])?\\{\\s*preview\\s*\\}/u.test(preamble)
+    ? preamble
+    : `${preamble}\\n\\usepackage[active,tightpage]{preview}`.trim();
+
+  const prefix = body.slice(0, start);
+  const bodyStart = beginMatch.index + beginMatch[0].length;
+  const userBody = body.slice(bodyStart, endIndex);
+  const alreadyPreviewWrapped = /\\\\begin\\{preview\\}/u.test(userBody) && /\\\\end\\{preview\\}/u.test(userBody);
+
+  return `${prefix}${previewPreamble}\\n\\begin{document}\\n${alreadyPreviewWrapped ? userBody : `\\begin{preview}\\n${userBody.trim()}\\n\\end{preview}\\n`}\\end{document}\\n`;
+}
 function rewriteExternalReferences(source: string, sourcePath: string | undefined, files: ExternalDependency[]): string {
   if (!sourcePath || files.length === 0) return source;
   return rewriteReferenceCommands(source, normalizeVaultPath(sourcePath), "main.tex", files);
