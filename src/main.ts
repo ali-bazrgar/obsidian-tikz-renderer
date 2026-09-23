@@ -33,6 +33,14 @@ export default class TikzRendererPlugin extends Plugin {
     this.generatedLinkObserver.observe(document.body, { childList: true, subtree: true });
     this.register(() => this.generatedLinkObserver?.disconnect());
     this.markGeneratedLinks();
+
+    // Obsidian can rebuild the Markdown preview/source DOM during a mode
+    // transition without re-running the renderer child immediately. Keep all
+    // live TikZ renderer instances synchronized with the actual mode so the
+    // saved Write zoom/pan state is applied as soon as Read/Write changes.
+    this.registerEvent(this.app.workspace.on("layout-change", () => TikzRendererView.syncAllModes()));
+    this.registerEvent(this.app.workspace.on("active-leaf-change", () => TikzRendererView.syncAllModes()));
+
     this.addCommand({ id: "test-tex-installation", name: "Test TeX installation", callback: async () => { const result = await this.renderService.testInstallation(); new Notice(result.summary, 8000); }});
     this.addCommand({ id: "detect-tex-executables", name: "Detect TeX Live executables", callback: async () => this.detectTeXExecutables() });
     this.addCommand({ id: "clear-render-cache", name: "Clear TikZ render cache", callback: async () => { await this.renderService.clearCache(); new Notice("TikZ render cache cleared."); }});
