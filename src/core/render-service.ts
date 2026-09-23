@@ -13,7 +13,7 @@ import { augmentPreamble } from "./tex-package-detector";
 import { TeXDependencyResolver, TeXDependency } from "./tex-dependency-resolver";
 
 const execFileAsync = promisify(execFile);
-const PIPELINE_VERSION = "14-robust-font-deps-external-files-bbox-best-effort";
+const PIPELINE_VERSION = "15-robust-font-deps-xelatex-pdf-preview-fences";
 const MAX_OUTPUT = 4 * 1024 * 1024;
 const MAX_DEPENDENCY_FILES = 200;
 const MAX_DEPENDENCY_TOTAL_BYTES = 200 * 1024 * 1024;
@@ -84,7 +84,7 @@ export class RenderService {
     try {
       const font = getPersianFontSelection(settings);
       if (!font) return { ok: false, message: "No Persian font family or font file is configured." };
-      const plan: EnginePlan = { engine: "xelatex", executable: settings.xelatexPath, outputType: "xdv" };
+      const plan: EnginePlan = { engine: "xelatex", executable: settings.xelatexPath, outputType: "pdf" };
       await this.validateConfiguredFontIfNeeded("سلام", settings, plan, true);
       return { ok: true, message: "Persian font is available: " + font.value + (font.path ? " (" + font.path + ")" : "") };
     } catch (error) {
@@ -240,7 +240,7 @@ export class RenderService {
     const output = path.join(work, "main.svg");
     if (outputType === "pdf") {
       const mutool = settings.mutoolPath.trim() || "mutool";
-      await this.runStrict(mutool, ["draw", "-q", "-o", output, input, "1"], work, settings.compileTimeout);
+      await this.runStrict(mutool, ["draw", "-q", "-F", "svg", "-o", output, input, "1"], work, settings.compileTimeout);
     } else {
       await this.runStrict(settings.dvisvgmPath, ["--no-fonts", "--exact-bbox", "--embed-bitmaps", input, "-o", output], work, settings.compileTimeout);
     }
@@ -391,7 +391,7 @@ export function selectEngine(source: string, settings: TikzSettings): EnginePlan
   else engine = "latex";
 
   const executable = ({ latex: settings.latexPath, pdflatex: settings.pdflatexPath, xelatex: settings.xelatexPath, lualatex: settings.lualatexPath, dvilualatex: settings.dvilualatexPath } as Record<Exclude<Engine, "auto">, string>)[engine];
-  const outputType: EnginePlan["outputType"] = engine === "latex" ? "dvi" : engine === "xelatex" ? "xdv" : "pdf";
+  const outputType: EnginePlan["outputType"] = engine === "latex" ? "dvi" : "pdf";
   return { engine, executable, outputType };
 }
 
@@ -635,4 +635,9 @@ function buildTeXEnvironment(cwd: string, sourcePath: string | undefined, extern
 
 function appendSearchPath(existing: string | undefined, value: string): string {
   return existing ? `${value}${path.delimiter}${existing}` : `${value}${path.delimiter}`;
+}
+
+
+function stripMarkdownFences(source: string): string {
+  return source.replace(/^\s*```(?:tikz|pgfplots|circuitikz|tex|latex)?\s*$/gmu, "").trim();
 }
