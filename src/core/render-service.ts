@@ -240,7 +240,7 @@ export class RenderService {
     const output = path.join(work, "main.svg");
     if (outputType === "pdf") {
       const mutool = settings.mutoolPath.trim() || "mutool";
-      await this.runStrict(mutool, ["draw", "-q", "-F", "svg", "-o", output, input, "1"], work, settings.compileTimeout);
+      await this.runStrict(mutool, ["draw", "-q", "-o", output, input, "1"], work, settings.compileTimeout);
     } else {
       await this.runStrict(settings.dvisvgmPath, ["--no-fonts", "--exact-bbox", "--embed-bitmaps", input, "-o", output], work, settings.compileTimeout);
     }
