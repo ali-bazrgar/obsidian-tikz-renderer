@@ -13,7 +13,7 @@ import { augmentPreamble } from "./tex-package-detector";
 import { TeXDependencyResolver, TeXDependency } from "./tex-dependency-resolver";
 
 const execFileAsync = promisify(execFile);
-const PIPELINE_VERSION = "15-robust-svg-conversion";
+const PIPELINE_VERSION = "16-xdv-via-xdvipdfmx-centered-fit";
 const MAX_OUTPUT = 4 * 1024 * 1024;
 const MAX_DEPENDENCY_FILES = 200;
 const MAX_DEPENDENCY_TOTAL_BYTES = 200 * 1024 * 1024;
