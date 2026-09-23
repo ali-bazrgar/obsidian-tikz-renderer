@@ -55,7 +55,10 @@ const renderChecks = [
   ["dvipdfmx", "LaTeX DVI to PDF fallback"],
   ["hasTikzPatterns(", "TikZ pattern detection"],
   ["--pdf", "dvisvgm PDF pattern-preservation fallback"],
-  ["PIPELINE_VERSION = \"17-xdv-via-xdvipdfmx-pattern-preserving\"", "SVG conversion cache invalidation"],
+  ["pgfsys-dvisvgm.def", "PGF dvisvgm pattern driver"],
+  ["withDvisvgmPatternDriver(", "pattern-driver preamble injection"],
+  ["preferDvisvgmPatternDriver", "direct XDV pattern rendering"],
+  ["PIPELINE_VERSION = \"18-xdv-pattern-driver-direct\"", "SVG conversion cache invalidation"],
 ];
 for (const [needle, label] of renderChecks) {
   if (!render.includes(needle)) throw new Error("Missing render invariant: " + label);
