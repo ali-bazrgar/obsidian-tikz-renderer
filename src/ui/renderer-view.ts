@@ -39,7 +39,9 @@ export class TikzRendererView extends MarkdownRenderChild {
     const controls = shell.createDiv({ cls: "tikz-renderer-controls" });
     const menu = controls.createEl("button", { cls: "tikz-renderer-menu", text: "⋯", attr: { type: "button", title: "TikZ controls", "aria-label": "TikZ controls", "aria-expanded": "false" } });
     const panel = doc.body.createDiv({ cls: "tikz-renderer-panel" }); panel.hidden = true; panel.setAttribute("role", "menu"); panel.dataset.tikzPopup = "true";
-    const persisted = TikzRendererView.viewStates.get(stateKey) ?? loadViewState(stateKey); if (persisted) TikzRendererView.viewStates.set(stateKey, persisted);
+    const existingState = TikzRendererView.viewStates.get(stateKey);
+    const persisted = existingState ?? loadViewState(stateKey);
+    if (persisted && !existingState) TikzRendererView.viewStates.set(stateKey, persisted);
     const settings = this.getSettings();
     const persistedTheme = TikzRendererView.themeStates.get(stateKey) ?? loadThemeState(stateKey);
     const themeState: TikzThemeState = persistedTheme ?? { displayTheme: settings.displayTheme, customBackgroundColor: settings.customBackgroundColor, customBackgroundOpacity: settings.customBackgroundOpacity };
@@ -48,7 +50,12 @@ export class TikzRendererView extends MarkdownRenderChild {
     TikzRendererView.viewStates.set(stateKey, initialEditState);
     let zoom = initialEditState.zoom, panX = initialEditState.panX, panY = initialEditState.panY, naturalWidth = 0, naturalHeight = 0, viewportHeight = initialEditState.viewportHeight, dragging = false, lastX = 0, lastY = 0;
     let readingMode = false;
-    const isReadingMode = (): boolean => !!shell.closest(".markdown-preview-view");
+    const getCurrentMode = (): "reading" | "writing" => {
+      const sourceView = shell.closest(".markdown-source-view");
+      if (sourceView) return "writing";
+      return shell.closest(".markdown-preview-view") ? "reading" : "writing";
+    };
+    const isReadingMode = (): boolean => getCurrentMode() === "reading";
     const closePanel = (): void => { panel.hidden = true; menu.setAttribute("aria-expanded", "false"); menu.removeAttribute("data-open"); };
 
     const getViewportWidth = (): number => Math.max(1, Math.round(shell.clientWidth || this.containerEl.clientWidth || viewport.getBoundingClientRect().width || naturalWidth));
@@ -93,18 +100,12 @@ export class TikzRendererView extends MarkdownRenderChild {
     const updateMode = (): boolean => {
       const nextReadingMode = isReadingMode();
       const changedMode = nextReadingMode !== readingMode;
-      if (changedMode) {
-        // Write is the authoritative interactive mode. Read is only a
-        // read-only presentation of the exact Write geometry.
-        if (nextReadingMode) {
-          const shared = TikzRendererView.viewStates.get(stateKey) ?? loadViewState(stateKey) ?? initialEditState;
-          applyLocalViewState(shared);
-          dragging = false;
-        } else {
-          const shared = TikzRendererView.viewStates.get(stateKey) ?? initialEditState;
-          applyLocalViewState(shared);
-          dragging = false;
-        }
+      if (changedMode || nextReadingMode) {
+        // Write is the authoritative interactive mode. Read is a passive
+        // presentation of the exact state currently owned by Write.
+        const shared = TikzRendererView.viewStates.get(stateKey) ?? loadViewState(stateKey) ?? initialEditState;
+        applyLocalViewState(shared);
+        dragging = false;
       }
       readingMode = nextReadingMode;
       shell.dataset.mode = nextReadingMode ? "reading" : "writing";
@@ -150,12 +151,17 @@ export class TikzRendererView extends MarkdownRenderChild {
     const outsidePointerDown = (e: PointerEvent): void => { if (!panel.hidden && (!(e.target instanceof Node) || (!shell.contains(e.target) && !panel.contains(e.target)))) closePanel(); }; doc.addEventListener("pointerdown", outsidePointerDown, true);
     const escape = (e: KeyboardEvent): void => { if (e.key === "Escape" && !panel.hidden) { closePanel(); menu.focus(); } }; doc.addEventListener("keydown", escape, true);
     svg.addEventListener("click", e => { e.preventDefault(); e.stopPropagation(); });
-    viewport.addEventListener("pointerdown", e => { if (isReadingMode() || e.button !== 0 || zoom <= 1) return; dragging = true; lastX = e.clientX; lastY = e.clientY; viewport.setPointerCapture(e.pointerId); e.preventDefault(); e.stopPropagation(); });
+    viewport.addEventListener("pointerdown", e => {
+      updateMode();
+      if (readingMode || e.button !== 0 || zoom <= 1) return;
+      dragging = true; lastX = e.clientX; lastY = e.clientY; viewport.setPointerCapture(e.pointerId); e.preventDefault(); e.stopPropagation(); });
     viewport.addEventListener("pointermove", e => { if (!dragging) return; panX += e.clientX - lastX; panY += e.clientY - lastY; lastX = e.clientX; lastY = e.clientY; clampCurrentPan(); applySvgTransform(); e.preventDefault(); e.stopPropagation(); });
     const stopDragging = (): void => { if (!dragging) return; dragging = false; clampCurrentPan(); persistViewState(); viewport.classList.remove("is-dragging"); };
     viewport.addEventListener("pointerup", stopDragging); viewport.addEventListener("pointercancel", stopDragging); viewport.addEventListener("lostpointercapture", stopDragging);
     const wheel = (e: WheelEvent): void => {
-      if (isReadingMode() || !shell.isConnected) return;
+      if (!shell.isConnected) return;
+      updateMode();
+      if (readingMode) return;
       const target = e.target;
       if (!(target instanceof Node) || !viewport.contains(target)) return;
       if (target instanceof HTMLInputElement || target instanceof HTMLButtonElement) return;
@@ -196,7 +202,7 @@ export class TikzRendererView extends MarkdownRenderChild {
       applyZoom();
     };
     win?.addEventListener("wheel", wheel, { passive: false, capture: true });
-    const observer = new MutationObserver(() => { const changed = updateMode(); if (changed) applyZoom(); else { applyTheme(); positionPanel(); } }); observer.observe(doc.body, { attributes: true, attributeFilter: ["class"] });
+    const observer = new MutationObserver(() => { const changed = updateMode(); if (changed) applyZoom(); else { applyTheme(); positionPanel(); } }); observer.observe(doc.body, { attributes: true, attributeFilter: ["class"], subtree: true });
     const resizeObserver = new ResizeObserver(() => {
       ensureViewportSize();
       positionPanel();
