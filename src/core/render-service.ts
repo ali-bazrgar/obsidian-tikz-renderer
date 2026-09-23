@@ -651,7 +651,13 @@ function relativeStagedPath(currentStagedPath: string, targetStagedPath: string)
   return (relative || path.posix.basename(target)).replace(/\\/gu, "/");
 }
 
-function escapeTex(value: string): string { return value.replace(/[{}%\\]/g, "\\$&"); }
+function resolveSiblingExecutable(configured: string, name: string): string {
+  const value = configured.trim();
+  if (!value) return name;
+  if (path.isAbsolute(value)) return path.join(path.dirname(value), process.platform === "win32" ? name + ".exe" : name);
+  return name;
+}
+function escapeTex(value: string): string { return value.replace(/[{}%\\]/g, "\\function escapeTex(value: string): string { return value.replace(/[{}%\\]/g, "\\$&"); }"); }
 
 function sanitizeSvg(svg: string): string {
   return svg
