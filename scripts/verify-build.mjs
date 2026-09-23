@@ -39,7 +39,6 @@ const renderChecks = [
   ["rewriteExternalReferences(", "vault dependency rewriting"],
   ["--no-fonts", "font outlines as paths"],
   ["--exact-bbox", "exact character bounding boxes"],
-  ["--embed-bitmaps", "embedded bitmap assets"],
   ["bestEffortOutput", "best-effort setting"],
   ["shellEscape", "shell escape setting"],
   ["buildFullDocument(", "full-document dependency injection"],
@@ -48,6 +47,12 @@ const renderChecks = [
   ["augmentPreamble(extractDocumentPreamble(source), source)", "full-document source package detection"],
   ["normalizeLatexSource(", "LaTeX display-math normalization"],
   ["dvilualatex is not a compatible SVG backend", "LuaTeX DVI guard"],
+  ["runCapture(", "captured SVG conversion output"],
+  ["-F", "svg", "explicit SVG conversion format"],
+  ["text=path,no-reuse-images", "stable MuPDF SVG text paths"],
+  ["main-1.svg", "single-page SVG filename fallback"],
+  ["dvipdfmx", "DVI/XDV PDF fallback"],
+  ["PIPELINE_VERSION = \"15-robust-svg-conversion\"", "SVG conversion cache invalidation"],
 ];
 for (const [needle, label] of renderChecks) {
   if (!render.includes(needle)) throw new Error("Missing render invariant: " + label);
