@@ -236,7 +236,10 @@ export class TikzRendererView extends MarkdownRenderChild {
     if (!win || this.wheelHandler) return;
     this.wheelWindow = win;
     this.wheelHandler = (event: WheelEvent): void => {
-      if (event.defaultPrevented) return;
+      // Obsidian/CodeMirror may already call preventDefault() for editor
+      // scrolling before our window listener runs. That must NOT disable the
+      // TikZ zoom handler; we handle the wheel independently and also prevent
+      // the editor's default scrolling below when the pointer is over a figure.
 
       // First prefer the actual event path. This is the normal case.
       const path = typeof event.composedPath === "function" ? event.composedPath() : [];
