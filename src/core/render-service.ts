@@ -13,7 +13,7 @@ import { augmentPreamble } from "./tex-package-detector";
 import { TeXDependencyResolver, TeXDependency } from "./tex-dependency-resolver";
 
 const execFileAsync = promisify(execFile);
-const PIPELINE_VERSION = "16-xdv-via-xdvipdfmx-centered-fit";
+const PIPELINE_VERSION = "17-xdv-via-xdvipdfmx-pattern-preserving";
 const MAX_OUTPUT = 4 * 1024 * 1024;
 const MAX_DEPENDENCY_FILES = 200;
 const MAX_DEPENDENCY_TOTAL_BYTES = 200 * 1024 * 1024;
@@ -169,7 +169,8 @@ export class RenderService {
         const artifactExists = await this.exists(input);
 
         if (compile.ok) {
-          const svg = await this.convertToSvg(input, plan.outputType, work, settings);
+          const preferPatternPreservingConverter = hasTikzPatterns(detectionSource);
+          const svg = await this.convertToSvg(input, plan.outputType, work, settings, preferPatternPreservingConverter);
           await fs.writeFile(cached, svg, "utf8");
           return { hash, svg, engine: plan.engine, fromCache: false, source, kind };
         }
@@ -182,7 +183,8 @@ export class RenderService {
 
         if (settings.bestEffortOutput && artifactExists) {
           try {
-            const svg = await this.convertToSvg(input, plan.outputType, work, settings);
+            const preferPatternPreservingConverter = hasTikzPatterns(detectionSource);
+            const svg = await this.convertToSvg(input, plan.outputType, work, settings, preferPatternPreservingConverter);
             await fs.writeFile(cached, svg, "utf8");
             bestEffortWarning = `TeX exited with code ${compile.exitCode ?? "non-zero"}, but a valid ${extension.toUpperCase()} artifact was produced and converted successfully.`;
             return { hash, svg, engine: plan.engine, fromCache: false, source, kind, warning: bestEffortWarning };
@@ -236,7 +238,13 @@ export class RenderService {
       await fs.rm(probeDir, { recursive: true, force: true }).catch(() => undefined);
     }
   }
-  private async convertToSvg(input: string, outputType: EnginePlan["outputType"], work: string, settings: TikzSettings): Promise<string> {
+  private async convertToSvg(
+    input: string,
+    outputType: EnginePlan["outputType"],
+    work: string,
+    settings: TikzSettings,
+    preferPatternPreservingConverter = false,
+  ): Promise<string> {
     const output = path.join(work, "main.svg");
 
     if (outputType === "pdf") {
@@ -252,6 +260,38 @@ export class RenderService {
         await this.runStrict(xdvipdfmx, ["-o", pdf, input], work, settings.compileTimeout);
         if (!await this.exists(pdf)) throw new RenderError("xdvipdfmx completed without producing a PDF file.");
         await this.convertPdfToSvg(pdf, output, work, settings);
+
+        // TikZ patterns are represented as PDF tiling patterns. Some PDF-to-SVG
+        // writers flatten those fills instead of preserving an SVG pattern.
+        // Only documents that actually use TikZ patterns get this narrow
+        // secondary conversion attempt; every other render keeps the normal
+        // MuPDF path unchanged.
+        if (preferPatternPreservingConverter) {
+          const currentSvg = await fs.readFile(output, "utf8").catch(() => "");
+          if (!/<pattern\b/i.test(currentSvg)) {
+            const patternSvg = path.join(work, "main-patterns.svg");
+            const dvisvgm = settings.dvisvgmPath.trim() || "dvisvgm";
+            try {
+              await this.runStrict(
+                dvisvgm,
+                ["--pdf", "--no-fonts=1", "--verbosity=0", pdf, "-o", patternSvg],
+                work,
+                settings.compileTimeout,
+              );
+              if (await this.exists(patternSvg)) {
+                const candidate = await fs.readFile(patternSvg, "utf8");
+                if (/<pattern\b/i.test(candidate) && /url\(#/i.test(candidate)) {
+                  await fs.rename(patternSvg, output).catch(async () => {
+                    await fs.copyFile(patternSvg, output);
+                    await fs.rm(patternSvg, { force: true }).catch(() => undefined);
+                  });
+                }
+              }
+            } catch {
+              // Keep the already-valid MuPDF SVG when this optional path fails.
+            }
+          }
+        }
       } catch (xdvError) {
         // Keep the dvisvgm path as a compatibility fallback so existing
         // installations/features are not removed if xdvipdfmx is unavailable.
@@ -645,6 +685,10 @@ function resolveSiblingExecutable(configured: string, name: string): string {
   return name;
 }
 function escapeTex(value: string): string { return value.replace(/[{}%\\]/g, "\\$&"); }
+
+function hasTikzPatterns(source: string): boolean {
+  return /(?:\\(?:fill|filldraw|path|draw)\b[^\n\r]*\bpattern\s*=|\\begin\{tikzpicture\}[\s\S]*\bpattern\s*=|pattern\s*=)/iu.test(source);
+}
 
 function sanitizeSvg(svg: string): string {
   return svg
