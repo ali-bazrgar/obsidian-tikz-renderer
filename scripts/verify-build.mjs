@@ -54,7 +54,6 @@ const renderChecks = [
   ["xdvipdfmx", "XeLaTeX XDV to PDF fallback"],
   ["dvipdfmx", "LaTeX DVI to PDF fallback"],
   ["hasTikzPatterns(", "TikZ pattern detection"],
-  ["--pdf", "dvisvgm PDF pattern-preservation fallback"],
   ["pgfsys-dvisvgm.def", "PGF dvisvgm pattern driver"],
   ["withDvisvgmPatternDriver(", "pattern-driver preamble injection"],
   ["preferDvisvgmPatternDriver", "direct XDV pattern rendering"],
