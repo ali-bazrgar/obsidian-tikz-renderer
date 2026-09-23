@@ -472,24 +472,28 @@ function extractDocumentPreamble(source: string): string {
 }
 
 function buildFullDocument(body: string, effectivePreamble: string): string {
-  const beginMatch = /\\begin\\{document\\}/u.exec(body);
-  const endIndex = body.lastIndexOf("\\end{document}");
+  const beginMatch = /\\\\begin\\{document\\}/u.exec(body);
+  const endIndex = body.lastIndexOf("\\\\end{document}");
   if (!beginMatch || endIndex < 0 || endIndex <= beginMatch.index) return body.endsWith("\n") ? body : body + "\n";
 
-  const classMatch = /^\\documentclass(?:\[[^\]]*\])?\{[^}]+\}\s*/u.exec(body);
+  const classMatch = /^\\\\documentclass(?:\\[[^\\]]*\\])?\\{[^}]+\\}\\s*/u.exec(body);
   const start = classMatch ? classMatch[0].length : 0;
   const preamble = effectivePreamble.trim();
 
-  const previewPreamble = /\\usepackage(?:\[[^\]]*\])?\{\s*preview\s*\}/u.test(preamble)
+  const previewPreamble = /\\\\usepackage(?:\\[[^\\]]*\\])?\\{\\s*preview\\s*\\}/u.test(preamble)
     ? preamble
-    : `${preamble}\n\\usepackage[active,tightpage]{preview}`.trim();
+    : [preamble, "\\\\usepackage[active,tightpage]{preview}"].filter(Boolean).join("\n");
 
   const prefix = body.slice(0, start);
   const bodyStart = beginMatch.index + beginMatch[0].length;
   const userBody = body.slice(bodyStart, endIndex);
-  const alreadyPreviewWrapped = /\\begin\{preview\}/u.test(userBody) && /\\end\{preview\}/u.test(userBody);
+  const alreadyPreviewWrapped = /\\\\begin\\{preview\\}/u.test(userBody) && /\\\\end\\{preview\\}/u.test(userBody);
 
-  return `${prefix}${previewPreamble}\n\\begin{document}\n${alreadyPreviewWrapped ? userBody : `\\begin{preview}\n${userBody.trim()}\n\\end{preview}\n`}\\end{document}\n`;
+  const wrappedBody = alreadyPreviewWrapped
+    ? userBody
+    : ["\\\\begin{preview}", userBody.trim(), "\\\\end{preview}"].join("\n");
+
+  return [prefix, previewPreamble, "\\\\begin{document}", wrappedBody, "\\\\end{document}", ""].join("\n");
 }
 function rewriteExternalReferences(source: string, sourcePath: string | undefined, files: ExternalDependency[]): string {
   if (!sourcePath || files.length === 0) return source;
