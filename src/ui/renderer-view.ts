@@ -156,12 +156,37 @@ export class TikzRendererView extends MarkdownRenderChild {
     const showAssetActions = (): void => { const path = this.result.assetPath; if (!path) return; const links = panel.createDiv({ cls: "tikz-renderer-asset-links" }); links.createEl("a", { text: `SVG: ${path}`, attr: { href: "#" } }).addEventListener("click", e => { e.preventDefault(); this.app.workspace.openLinkText(path, this.sourcePath, false); }); links.createEl("button", { text: "Copy SVG wikilink", attr: { type: "button" } }).addEventListener("click", async e => { e.preventDefault(); e.stopPropagation(); await navigator.clipboard.writeText(`[[${path}]]`); new Notice("SVG wikilink copied."); }); };
     const renderThemeMenu = (): void => { panel.empty(); panel.createDiv({ cls: "tikz-renderer-panel-title", text: "Theme" }); const themes: Array<[DisplayTheme, string]> = [["auto", "Auto"], ["obsidian", "Obsidian"], ["light", "Light"], ["paper", "Paper"], ["dark", "Dark"], ["contrast", "Contrast"], ["bw", "Black & white"], ["custom", "Custom"]]; for (const [theme, label] of themes) { const b = panel.createEl("button", { text: label, attr: { type: "button", role: "menuitemradio", "aria-checked": `${themeState.displayTheme === theme}` } }); b.addEventListener("click", e => { e.preventDefault(); e.stopPropagation(); themeState.displayTheme = theme; persistTheme(); if (theme === "custom") renderThemeMenu(); else closePanel(); }); } if (themeState.displayTheme === "custom") { const color = panel.createEl("input", { attr: { type: "color", value: themeState.customBackgroundColor } }); color.addEventListener("change", () => { themeState.customBackgroundColor = color.value; persistTheme(); }); const opacity = panel.createEl("input", { attr: { type: "range", min: "10", max: "100", value: `${themeState.customBackgroundOpacity}` } }); opacity.addEventListener("input", () => { themeState.customBackgroundOpacity = Number(opacity.value); applyTheme(); }); opacity.addEventListener("change", () => persistTheme()); } panel.createEl("button", { text: "Back", attr: { type: "button" } }).addEventListener("click", e => { e.preventDefault(); e.stopPropagation(); buildMainPanel(); }); positionPanel(); };
     const buildMainPanel = (): void => { panel.empty(); panel.createDiv({ cls: "tikz-renderer-panel-title", text: "TikZ controls" }); addButton("Zoom −", () => { if (isReadingMode()) return; const oldZoom = zoom; const nextZoom = clampZoom(oldZoom - .25); if (nextZoom !== oldZoom) zoom = nextZoom; persistViewState(); applyZoom(); }); addButton("Zoom +", () => { if (isReadingMode()) return; const oldZoom = zoom; const nextZoom = clampZoom(oldZoom + .25); if (nextZoom !== oldZoom) zoom = nextZoom; persistViewState(); applyZoom(); }); addButton("Reset view", resetView); addButton("Fit", fit); addButton("Theme", renderThemeMenu); addButton("Export PNG", exportPng); addButton("Edit source", () => new TikzSourceModal(this.app, this.source, async next => this.editSource(next)).open()); addButton("History", () => { panel.empty(); panel.createDiv({ cls: "tikz-renderer-panel-title", text: "History" }); const entries = this.history.list(this.historyKey); for (const [i, entry] of entries.entries()) { const row = panel.createDiv({ cls: "tikz-history-row" }); row.createSpan({ text: `Version ${entries.length - i}` }); row.createSpan({ text: new Date(entry.timestamp).toLocaleString() }); if (entry.source !== this.source) row.createEl("button", { text: "Restore", attr: { type: "button" } }).addEventListener("click", () => new TikzSourceModal(this.app, entry.source, async next => this.editSource(next)).open()); } panel.createEl("button", { text: "Back", attr: { type: "button" } }).addEventListener("click", () => buildMainPanel()); }); addButton("Re-render", async () => { const next = await this.service.render(this.source, this.kind, this.sourcePath); this.result.svg = next.svg; this.result.hash = next.hash; this.result.engine = next.engine; this.result.fromCache = next.fromCache; this.result.assetPath = await this.exportService.saveSvg(next.svg, next.hash, this.sourcePath, false); closePanel(); this.render(); }); addButton("Copy source", async () => { await navigator.clipboard.writeText(this.source); new Notice("TikZ source copied."); }); if (this.result.assetPath) showAssetActions(); };
-    const openPanel = (): void => { if (!shell.isConnected || controls.hidden || isReadingMode()) return; panel.hidden = false; menu.setAttribute("aria-expanded", "true"); menu.setAttribute("data-open", "true"); buildMainPanel(); positionPanel(); };
-    const togglePanel = (e: Event): void => { e.preventDefault(); e.stopPropagation(); if (isReadingMode()) return; if (panel.hidden) openPanel(); else closePanel(); };
+    const openPanel = (): void => {
+      if (!shell.isConnected) return;
+      // Synchronize the mode immediately before deciding whether controls are
+      // available. The editor can switch Read/Write by rebuilding DOM nodes
+      // without changing the hidden flag left by the previous mode.
+      updateMode();
+      if (readingMode || controls.hidden) return;
+      panel.hidden = false;
+      menu.setAttribute("aria-expanded", "true");
+      menu.setAttribute("data-open", "true");
+      buildMainPanel();
+      positionPanel();
+    };
+    const togglePanel = (e: Event): void => {
+      e.preventDefault();
+      e.stopPropagation();
+      updateMode();
+      if (readingMode) return;
+      if (panel.hidden) openPanel();
+      else closePanel();
+    };
     menu.addEventListener("pointerdown", togglePanel); menu.addEventListener("keydown", e => { if ((e.key === "Enter" || e.key === " ") && !isReadingMode()) togglePanel(e); });
     const outsidePointerDown = (e: PointerEvent): void => { if (!panel.hidden && (!(e.target instanceof Node) || (!shell.contains(e.target) && !panel.contains(e.target)))) closePanel(); }; doc.addEventListener("pointerdown", outsidePointerDown, true);
     const escape = (e: KeyboardEvent): void => { if (e.key === "Escape" && !panel.hidden) { closePanel(); menu.focus(); } }; doc.addEventListener("keydown", escape, true);
     svg.addEventListener("click", e => { e.preventDefault(); e.stopPropagation(); });
+    // Synchronize as soon as the pointer enters the figure. This removes
+    // the old behavior where returning from Read to Write required one click
+    // before the saved Write zoom/pan state was applied.
+    viewport.addEventListener("pointerenter", () => {
+      updateMode();
+    });
     viewport.addEventListener("pointerdown", e => {
       updateMode();
       if (readingMode || e.button !== 0 || zoom <= 1) return;
@@ -219,7 +244,12 @@ export class TikzRendererView extends MarkdownRenderChild {
     this.wheelViewport = viewport;
     this.wheelCallback = wheel;
     TikzRendererView.ensureGlobalWheelListener(win);
-    const observer = new MutationObserver(() => { const changed = updateMode(); if (changed) applyZoom(); else { applyTheme(); positionPanel(); } }); observer.observe(doc.body, { attributes: true, attributeFilter: ["class"], subtree: true });
+    const observer = new MutationObserver(() => {
+      const changed = updateMode();
+      if (changed) applyZoom();
+      else if (!panel.hidden) positionPanel();
+    });
+    observer.observe(doc.body, { attributes: true, attributeFilter: ["class"], childList: true, subtree: true });
     const resizeObserver = new ResizeObserver(() => {
       ensureViewportSize();
       positionPanel();
