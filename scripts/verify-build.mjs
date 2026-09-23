@@ -17,8 +17,8 @@ if (main.includes("@codemirror/state") || main.includes("@codemirror/view")) {
 const renderer = await readFile("src/ui/renderer-view.ts", "utf8");
 const rendererChecks = [
   ['parseFromString(this.result.svg, "image/svg+xml")', "inline SVG rendering"],
-  ["viewport.addEventListener("wheel", wheel, { passive: false, capture: true })", "direct viewport wheel handling"],
-  ["TikzRendererView.ensureGlobalWheelListener(win)", "delegated capture-phase wheel fallback"],
+  ['viewport.addEventListener("wheel", wheel, { passive: false, capture: true })', "direct viewport wheel handling"],
+  ['TikzRendererView.ensureGlobalWheelListener(win)', "delegated capture-phase wheel fallback"],
   ['this.result.assetPath = await this.exportService.saveSvg', "SVG asset persistence"],
   ['svg.addEventListener("click", e => { e.preventDefault(); e.stopPropagation(); })', "non-clickable inline SVG"],
   ['const getCurrentMode = (): "reading" | "writing" => {', "Reading/Write mode detection"],
