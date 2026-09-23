@@ -58,7 +58,7 @@ export class TikzRendererView extends MarkdownRenderChild {
     const getViewportHeight = (): number => Math.max(1, Math.round(viewport.clientHeight || viewportHeight || naturalHeight * zoom || 1));
     const syncViewportGeometry = (): void => {
       viewport.style.width = `${getViewportWidth()}px`;
-      viewport.style.maxWidth = "100%";
+      viewport.style.maxWidth = isReadingMode() ? "none" : "100%";
       if (!Number.isFinite(viewportHeight) || viewportHeight <= 0) viewportHeight = clampViewportHeight(naturalHeight * zoom);
       viewportHeight = clampViewportHeight(viewportHeight);
       viewport.style.height = `${viewportHeight}px`;
@@ -87,12 +87,13 @@ export class TikzRendererView extends MarkdownRenderChild {
     };
     const applyLocalViewState = (state: TikzViewState): void => {
       zoom = clampZoom(state.zoom); panX = Number.isFinite(state.panX) ? state.panX : 0; panY = Number.isFinite(state.panY) ? state.panY : 0;
+      if (Number.isFinite(state.viewportWidth) && state.viewportWidth > 0) viewportWidth = Math.max(1, Number(state.viewportWidth));
       if (Number.isFinite(state.viewportHeight) && state.viewportHeight > 0) viewportHeight = clampViewportHeight(state.viewportHeight);
       if (naturalWidth > 0 && naturalHeight > 0) { svg.style.width = `${naturalWidth * zoom}px`; svg.style.height = `${naturalHeight * zoom}px`; svg.style.maxWidth = "none"; }
       syncViewportGeometry(); clampCurrentPan(); applySvgTransform();
       viewport.classList.toggle("is-pannable", zoom > 1 || isReadingMode()); viewport.style.touchAction = "none";
     };
-    const syncSharedState = (): boolean => { const shared = TikzRendererView.viewStates.get(stateKey); if (!shared) return false; const changed = zoom !== shared.zoom || panX !== shared.panX || panY !== shared.panY || viewportHeight !== shared.viewportHeight; if (changed) applyLocalViewState(shared); return changed; };
+    const syncSharedState = (): boolean => { const shared = TikzRendererView.viewStates.get(stateKey); if (!shared) return false; const changed = zoom !== shared.zoom || panX !== shared.panX || panY !== shared.panY || viewportWidth !== shared.viewportWidth || viewportHeight !== shared.viewportHeight; if (changed) applyLocalViewState(shared); return changed; };
     const updateMode = (): boolean => {
       const nextReadingMode = isReadingMode();
       const changedMode = nextReadingMode !== readingMode;
