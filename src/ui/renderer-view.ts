@@ -12,6 +12,7 @@ export class TikzRendererView extends MarkdownRenderChild {
   private cleanup?: () => void;
   private sharedStateKey?: string;
   private applyExternalState?: (state: TikzViewState) => void;
+  private refreshModeState?: () => void;
   private static readonly activeViews = new Map<string, TikzRendererView>();
   private static readonly allViews = new Set<TikzRendererView>();
   private static wheelWindow?: Window;
@@ -177,7 +178,10 @@ export class TikzRendererView extends MarkdownRenderChild {
       if (panel.hidden) openPanel();
       else closePanel();
     };
-    menu.addEventListener("pointerdown", togglePanel); menu.addEventListener("keydown", e => { if ((e.key === "Enter" || e.key === " ") && !isReadingMode()) togglePanel(e); });
+    menu.addEventListener("click", togglePanel);
+    menu.addEventListener("keydown", e => {
+      if ((e.key === "Enter" || e.key === " ") && !isReadingMode()) togglePanel(e);
+    });
     const outsidePointerDown = (e: PointerEvent): void => { if (!panel.hidden && (!(e.target instanceof Node) || (!shell.contains(e.target) && !panel.contains(e.target)))) closePanel(); }; doc.addEventListener("pointerdown", outsidePointerDown, true);
     const escape = (e: KeyboardEvent): void => { if (e.key === "Escape" && !panel.hidden) { closePanel(); menu.focus(); } }; doc.addEventListener("keydown", escape, true);
     svg.addEventListener("click", e => { e.preventDefault(); e.stopPropagation(); });
@@ -257,8 +261,16 @@ export class TikzRendererView extends MarkdownRenderChild {
     resizeObserver.observe(viewport);
     const reposition = (): void => positionPanel(); win?.addEventListener("scroll", reposition, true); win?.addEventListener("resize", reposition);
     buildMainPanel(); closePanel(); updateMode(); applyTheme(); ensureIntrinsicSize(); ensureViewportSize(); applyZoom();
+    this.refreshModeState = (): void => {
+      const changed = updateMode();
+      if (changed) applyZoom();
+      else {
+        applyTheme();
+        if (!panel.hidden) positionPanel();
+      }
+    };
     this.applyExternalState = (state: TikzViewState): void => { if (!isReadingMode()) applyLocalViewState(state); };
-    this.cleanup = () => { if (TikzRendererView.activeViews.get(stateKey) === this) TikzRendererView.activeViews.delete(stateKey); doc.removeEventListener("pointerdown", outsidePointerDown, true); doc.removeEventListener("keydown", escape, true); menu.removeEventListener("pointerdown", togglePanel); this.wheelViewport = undefined; this.wheelCallback = undefined; win?.removeEventListener("scroll", reposition, true); win?.removeEventListener("resize", reposition); observer.disconnect(); resizeObserver.disconnect(); closePanel(); panel.remove(); TikzRendererView.allViews.delete(this); TikzRendererView.removeGlobalWheelListenerIfUnused(); this.applyExternalState = undefined; this.cleanup = undefined; };
+    this.cleanup = () => { if (TikzRendererView.activeViews.get(stateKey) === this) TikzRendererView.activeViews.delete(stateKey); doc.removeEventListener("pointerdown", outsidePointerDown, true); doc.removeEventListener("keydown", escape, true); menu.removeEventListener("pointerdown", togglePanel); this.wheelViewport = undefined; this.wheelCallback = undefined; win?.removeEventListener("scroll", reposition, true); win?.removeEventListener("resize", reposition); observer.disconnect(); resizeObserver.disconnect(); closePanel(); panel.remove(); TikzRendererView.allViews.delete(this); TikzRendererView.removeGlobalWheelListenerIfUnused(); this.applyExternalState = undefined; this.refreshModeState = undefined; this.cleanup = undefined; };
   }
   onunload(): void { this.cleanup?.(); this.containerEl.empty(); }
   dispose(emptyContainer = true): void { this.cleanup?.(); if (emptyContainer && this.containerEl.isConnected) this.containerEl.empty(); }
@@ -310,6 +322,10 @@ export class TikzRendererView extends MarkdownRenderChild {
     this.wheelWindow.removeEventListener("wheel", this.wheelHandler, true);
     this.wheelWindow = undefined;
     this.wheelHandler = undefined;
+  }
+
+  static syncAllModes(): void {
+    for (const view of Array.from(this.allViews)) view.refreshModeState?.();
   }
 
   static disposeAll(): void {
