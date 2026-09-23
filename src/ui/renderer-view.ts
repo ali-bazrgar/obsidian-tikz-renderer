@@ -71,11 +71,19 @@ export class TikzRendererView extends MarkdownRenderChild {
       panX = clampNumber(Number.isFinite(panX) ? panX : 0, minX, 0);
       panY = clampNumber(Number.isFinite(panY) ? panY : 0, minY, 0);
     };
+    const applyContentAlignment = (): void => {
+      const width = getViewportWidth();
+      const height = getViewportHeight();
+      const contentWidth = Math.max(1, naturalWidth * zoom);
+      const contentHeight = Math.max(1, naturalHeight * zoom);
+      svg.style.marginLeft = contentWidth < width ? `${Math.max(0, (width - contentWidth) / 2)}px` : "0px";
+      svg.style.marginTop = contentHeight < height ? `${Math.max(0, (height - contentHeight) / 2)}px` : "0px";
+    };
     const applyLocalViewState = (state: TikzViewState): void => {
       zoom = clampZoom(state.zoom); panX = Number.isFinite(state.panX) ? state.panX : 0; panY = Number.isFinite(state.panY) ? state.panY : 0;
       if (Number.isFinite(state.viewportHeight) && state.viewportHeight > 0) viewportHeight = clampViewportHeight(state.viewportHeight);
       if (naturalWidth > 0 && naturalHeight > 0) { svg.style.width = `${naturalWidth * zoom}px`; svg.style.height = `${naturalHeight * zoom}px`; svg.style.maxWidth = "none"; }
-      syncViewportGeometry(); clampCurrentPan(); svg.style.transform = `translate3d(${panX}px, ${panY}px, 0)`;
+      syncViewportGeometry(); clampCurrentPan(); applyContentAlignment(); svg.style.transform = `translate3d(${panX}px, ${panY}px, 0)`;
       viewport.classList.toggle("is-pannable", zoom > 1 || isReadingMode()); viewport.style.touchAction = "none";
     };
     const syncSharedState = (): boolean => { const shared = TikzRendererView.viewStates.get(stateKey); if (!shared) return false; const changed = zoom !== shared.zoom || panX !== shared.panX || panY !== shared.panY || viewportHeight !== shared.viewportHeight; if (changed) applyLocalViewState(shared); return changed; };
@@ -86,7 +94,7 @@ export class TikzRendererView extends MarkdownRenderChild {
     const persistTheme = (): void => { TikzRendererView.themeStates.set(stateKey, { ...themeState }); saveThemeState(stateKey, themeState); applyTheme(); };
     const ensureIntrinsicSize = (): boolean => { if (naturalWidth > 0 && naturalHeight > 0) return true; const b = svg.viewBox?.baseVal; if (b && b.width > 0 && b.height > 0) { naturalWidth = b.width; naturalHeight = b.height; return true; } const w = Number.parseFloat(svg.getAttribute("width") ?? ""); const h = Number.parseFloat(svg.getAttribute("height") ?? ""); if (w > 0 && h > 0) { naturalWidth = w; naturalHeight = h; return true; } return false; };
     const ensureViewportSize = (): void => { if (!ensureIntrinsicSize()) return; if (!Number.isFinite(viewportHeight) || viewportHeight <= 0) viewportHeight = clampViewportHeight(naturalHeight * zoom); syncViewportGeometry(); clampCurrentPan(); };
-    const applyZoom = (): void => { ensureViewportSize(); if (naturalWidth > 0 && naturalHeight > 0) { svg.style.width = `${naturalWidth * zoom}px`; svg.style.height = `${naturalHeight * zoom}px`; svg.style.maxWidth = "none"; } syncViewportGeometry(); clampCurrentPan(); svg.style.transform = `translate3d(${panX}px, ${panY}px, 0)`; viewport.classList.toggle("is-pannable", zoom > 1 || isReadingMode()); viewport.classList.toggle("is-dragging", dragging); viewport.style.touchAction = "none"; applyTheme(); updateMode(); positionPanel(); };
+    const applyZoom = (): void => { ensureViewportSize(); if (naturalWidth > 0 && naturalHeight > 0) { svg.style.width = `${naturalWidth * zoom}px`; svg.style.height = `${naturalHeight * zoom}px`; svg.style.maxWidth = "none"; } syncViewportGeometry(); clampCurrentPan(); applyContentAlignment(); svg.style.transform = `translate3d(${panX}px, ${panY}px, 0)`; viewport.classList.toggle("is-pannable", zoom > 1 || isReadingMode()); viewport.classList.toggle("is-dragging", dragging); viewport.style.touchAction = "none"; applyTheme(); updateMode(); positionPanel(); };
     const resetView = (): void => { if (isReadingMode()) return; zoom = clampZoom(settings.defaultZoom / 100); panX = 0; panY = 0; viewportHeight = clampViewportHeight(naturalHeight * zoom); persistEditViewState(); applyZoom(); };
     const fit = (): void => { if (isReadingMode() || !ensureIntrinsicSize()) return; const width = getViewportWidth(); zoom = clampZoom(Math.min(1, width / naturalWidth)); panX = 0; panY = 0; viewportHeight = clampViewportHeight(naturalHeight * zoom); persistEditViewState(); applyZoom(); };
     const addButton = (label: string, action: () => void | Promise<void>): void => { const b = panel.createEl("button", { text: label, attr: { type: "button", role: "menuitem" } }); b.addEventListener("click", e => { e.preventDefault(); e.stopPropagation(); void action(); }); };
