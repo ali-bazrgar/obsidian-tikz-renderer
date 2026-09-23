@@ -53,7 +53,9 @@ const renderChecks = [
   ["main-1.svg", "single-page SVG filename fallback"],
   ["xdvipdfmx", "XeLaTeX XDV to PDF fallback"],
   ["dvipdfmx", "LaTeX DVI to PDF fallback"],
-  ["PIPELINE_VERSION = \"16-xdv-via-xdvipdfmx-centered-fit\"", "SVG conversion cache invalidation"],
+  ["hasTikzPatterns(", "TikZ pattern detection"],
+  ["--pdf", "dvisvgm PDF pattern-preservation fallback"],
+  ["PIPELINE_VERSION = \"17-xdv-via-xdvipdfmx-pattern-preserving\"", "SVG conversion cache invalidation"],
 ];
 for (const [needle, label] of renderChecks) {
   if (!render.includes(needle)) throw new Error("Missing render invariant: " + label);
