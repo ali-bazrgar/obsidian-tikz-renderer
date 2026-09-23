@@ -265,7 +265,7 @@ export class RenderService {
           }
           if (await this.exists(output)) {
             const candidate = await fs.readFile(output, "utf8");
-            if (/<svg\\b/i.test(candidate) && /<pattern\\b/i.test(candidate) && /url\\(#/i.test(candidate)) {
+            if (/<svg\b/i.test(candidate) && /<pattern\b/i.test(candidate) && /url\(#/i.test(candidate)) {
               return sanitizeSvg(candidate);
             }
             await fs.rm(output, { force: true }).catch(() => undefined);
@@ -680,7 +680,7 @@ function hasTikzPatterns(source: string): boolean {
 }
 
 function withDvisvgmPatternDriver(preamble: string): string {
-  if (/\\def\s*\pgfsysdriver\s*\{\s*pgfsys-dvisvgm\.def\s*\}/u.test(preamble)) return preamble;
+  if (/\\def\s*\\pgfsysdriver\s*\{\s*pgfsys-dvisvgm\.def\s*\}/u.test(preamble)) return preamble;
   return `\\def\\pgfsysdriver{pgfsys-dvisvgm.def}\n${preamble}`;
 }
 
