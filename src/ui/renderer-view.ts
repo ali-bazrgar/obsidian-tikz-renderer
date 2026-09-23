@@ -99,6 +99,18 @@ export class TikzRendererView extends MarkdownRenderChild {
         const shared = TikzRendererView.viewStates.get(stateKey) ?? loadViewState(stateKey) ?? initialEditState;
         TikzRendererView.viewStates.set(stateKey, shared);
         applyLocalViewState(shared);
+        // A stale state from the previous Read-mode sizing implementation can
+        // contain an artificially tiny viewport height. Read mode should display
+        // the same figure geometry as Write mode, so never let a legacy value
+        // collapse the rendered SVG.
+        if (ensureIntrinsicSize()) {
+          const naturalViewportHeight = clampViewportHeight(naturalHeight * zoom);
+          if (viewportHeight < naturalViewportHeight * 0.75) {
+            viewportHeight = naturalViewportHeight;
+            applySvgTransform();
+            syncViewportGeometry();
+          }
+        }
         dragging = false;
       } else if (!nextReadingMode) {
         const shared = TikzRendererView.viewStates.get(stateKey) ?? initialEditState;
