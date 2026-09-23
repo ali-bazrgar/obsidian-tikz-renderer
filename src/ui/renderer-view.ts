@@ -186,9 +186,6 @@ export class TikzRendererView extends MarkdownRenderChild {
     menu.addEventListener("click", togglePanel);
     const escape = (e: KeyboardEvent): void => { if (e.key === "Escape" && !panel.hidden) { closePanel(); menu.focus(); } }; doc.addEventListener("keydown", escape, true);
     svg.addEventListener("click", e => { e.preventDefault(); e.stopPropagation(); });
-    // Synchronize as soon as the pointer enters the figure. This removes
-    // the old behavior where returning from Read to Write required one click
-    // before the saved Write zoom/pan state was applied.
     viewport.addEventListener("pointerdown", e => {
       updateMode();
       if (readingMode || e.button !== 0 || zoom <= 1) return;
