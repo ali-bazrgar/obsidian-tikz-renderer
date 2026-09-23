@@ -21,3 +21,13 @@ jobs:
           test -s main.js
           test -s manifest.json
           test -s styles.css
+      - name: Upload plugin bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: tikz-renderer-fixed-build
+          path: |
+            main.js
+            manifest.json
+            styles.css
+          if-no-files-found: error
+
