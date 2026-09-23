@@ -173,9 +173,12 @@ export class TikzRendererView extends MarkdownRenderChild {
       if (!shell.isConnected) return;
       updateMode();
       if (readingMode) return;
-      const path = typeof e.composedPath === "function" ? e.composedPath() : [];
+      // Hit-testing is performed by the single delegated window listener.
+      // Do not require the wheel event target to be a descendant of this
+      // viewport: during Read/Write transitions Obsidian may deliver the event
+      // to a CodeMirror/container element even while the pointer is over the
+      // rendered figure.
       const target = e.target;
-      if (!(target instanceof Node) || (!viewport.contains(target) && !path.includes(viewport))) return;
       if (target instanceof HTMLInputElement || target instanceof HTMLButtonElement) return;
       if (!ensureIntrinsicSize()) return;
 
