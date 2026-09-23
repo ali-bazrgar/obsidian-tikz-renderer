@@ -21,16 +21,3 @@ jobs:
           test -s main.js
           test -s manifest.json
           test -s styles.css
-
-      - name: Upload built plugin
-        uses: actions/upload-artifact@v4
-        with:
-          name: tikz-renderer-build-${{ github.sha }}
-          path: |
-            main.js
-            manifest.json
-            styles.css
-            meta.json
-            package-lock.json
-          if-no-files-found: error
-          retention-days: 7
