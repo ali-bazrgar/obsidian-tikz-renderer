@@ -225,7 +225,7 @@ export class TikzRendererView extends MarkdownRenderChild {
     const reposition = (): void => positionPanel(); win?.addEventListener("scroll", reposition, true); win?.addEventListener("resize", reposition);
     buildMainPanel(); closePanel(); updateMode(); applyTheme(); ensureIntrinsicSize(); ensureViewportSize(); applyZoom();
     this.applyExternalState = (state: TikzViewState): void => { if (!isReadingMode()) applyLocalViewState(state); };
-    this.cleanup = () => { if (TikzRendererView.activeViews.get(stateKey) === this) TikzRendererView.activeViews.delete(stateKey); doc.removeEventListener("pointerdown", outsidePointerDown, true); doc.removeEventListener("keydown", escape, true); menu.removeEventListener("pointerdown", togglePanel); this.wheelViewport = undefined; this.wheelCallback = undefined; TikzRendererView.removeGlobalWheelListenerIfUnused(); win?.removeEventListener("scroll", reposition, true); win?.removeEventListener("resize", reposition); observer.disconnect(); resizeObserver.disconnect(); closePanel(); panel.remove(); TikzRendererView.allViews.delete(this); this.applyExternalState = undefined; this.cleanup = undefined; };
+    this.cleanup = () => { if (TikzRendererView.activeViews.get(stateKey) === this) TikzRendererView.activeViews.delete(stateKey); doc.removeEventListener("pointerdown", outsidePointerDown, true); doc.removeEventListener("keydown", escape, true); menu.removeEventListener("pointerdown", togglePanel); this.wheelViewport = undefined; this.wheelCallback = undefined; win?.removeEventListener("scroll", reposition, true); win?.removeEventListener("resize", reposition); observer.disconnect(); resizeObserver.disconnect(); closePanel(); panel.remove(); TikzRendererView.allViews.delete(this); TikzRendererView.removeGlobalWheelListenerIfUnused(); this.applyExternalState = undefined; this.cleanup = undefined; };
   }
   onunload(): void { this.cleanup?.(); this.containerEl.empty(); }
   dispose(emptyContainer = true): void { this.cleanup?.(); if (emptyContainer && this.containerEl.isConnected) this.containerEl.empty(); }
@@ -241,7 +241,7 @@ export class TikzRendererView extends MarkdownRenderChild {
         if (!view.wheelViewport || !view.wheelViewport.isConnected) continue;
         if (path.includes(view.wheelViewport)) {
           view.wheelCallback?.(event);
-          return;
+          if (event.defaultPrevented) return;
         }
       }
 
@@ -261,6 +261,7 @@ export class TikzRendererView extends MarkdownRenderChild {
       }).reverse();
 
       for (const view of candidates) {
+        if (path.includes(view.wheelViewport!)) continue;
         view.wheelCallback?.(event);
         if (event.defaultPrevented) return;
       }
