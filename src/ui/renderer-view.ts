@@ -131,7 +131,7 @@ export class TikzRendererView extends MarkdownRenderChild {
     const outsidePointerDown = (e: PointerEvent): void => { if (!panel.hidden && (!(e.target instanceof Node) || (!shell.contains(e.target) && !panel.contains(e.target)))) closePanel(); }; doc.addEventListener("pointerdown", outsidePointerDown, true);
     const escape = (e: KeyboardEvent): void => { if (e.key === "Escape" && !panel.hidden) { closePanel(); menu.focus(); } }; doc.addEventListener("keydown", escape, true);
     svg.addEventListener("click", e => { e.preventDefault(); e.stopPropagation(); });
-    viewport.addEventListener("pointerdown", e => { if (e.button !== 0 || zoom <= 1) return; if (isReadingMode()) { /* Read mode uses the shared Write geometry; do not mutate the shared state. */ } dragging = true; lastX = e.clientX; lastY = e.clientY; viewport.setPointerCapture(e.pointerId); e.preventDefault(); e.stopPropagation(); });
+    viewport.addEventListener("pointerdown", e => { if (e.button !== 0 || zoom <= 1) return; dragging = true; lastX = e.clientX; lastY = e.clientY; viewport.setPointerCapture(e.pointerId); e.preventDefault(); e.stopPropagation(); });
     viewport.addEventListener("pointermove", e => { if (!dragging) return; panX += e.clientX - lastX; panY += e.clientY - lastY; lastX = e.clientX; lastY = e.clientY; clampCurrentPan(); applySvgTransform(); e.preventDefault(); e.stopPropagation(); });
     const stopDragging = (): void => { if (!dragging) return; dragging = false; clampCurrentPan(); persistViewState(); viewport.classList.remove("is-dragging"); };
     viewport.addEventListener("pointerup", stopDragging); viewport.addEventListener("pointercancel", stopDragging); viewport.addEventListener("lostpointercapture", stopDragging);
@@ -180,16 +180,12 @@ export class TikzRendererView extends MarkdownRenderChild {
     const observer = new MutationObserver(() => { const changed = updateMode(); if (changed) applyZoom(); else { applyTheme(); positionPanel(); } }); observer.observe(doc.body, { attributes: true, attributeFilter: ["class"] });
     const resizeObserver = new ResizeObserver(() => {
       ensureViewportSize();
-      if (isReadingMode()) {
-        const shared = TikzRendererView.viewStates.get(stateKey);
-        if (shared) applyLocalViewState(shared);
-      }
       positionPanel();
     });
     resizeObserver.observe(viewport);
     const reposition = (): void => positionPanel(); win?.addEventListener("scroll", reposition, true); win?.addEventListener("resize", reposition);
     buildMainPanel(); closePanel(); updateMode(); applyTheme(); ensureIntrinsicSize(); ensureViewportSize(); applyZoom();
-    this.applyExternalState = (state: TikzViewState): void => { if (!isReadingMode()) applyLocalViewState(state); };
+    this.applyExternalState = (state: TikzViewState): void => { applyLocalViewState(state); };
     this.cleanup = () => { if (TikzRendererView.activeViews.get(stateKey) === this) TikzRendererView.activeViews.delete(stateKey); doc.removeEventListener("pointerdown", outsidePointerDown, true); doc.removeEventListener("keydown", escape, true); menu.removeEventListener("pointerdown", togglePanel); win?.removeEventListener("wheel", wheel, true); win?.removeEventListener("scroll", reposition, true); win?.removeEventListener("resize", reposition); observer.disconnect(); resizeObserver.disconnect(); closePanel(); panel.remove(); TikzRendererView.allViews.delete(this); this.applyExternalState = undefined; this.cleanup = undefined; };
   }
   onunload(): void { this.cleanup?.(); this.containerEl.empty(); }
