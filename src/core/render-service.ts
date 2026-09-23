@@ -13,7 +13,7 @@ import { augmentPreamble } from "./tex-package-detector";
 import { TeXDependencyResolver, TeXDependency } from "./tex-dependency-resolver";
 
 const execFileAsync = promisify(execFile);
-const PIPELINE_VERSION = "14-robust-font-deps-external-files-bbox-best-effort";
+const PIPELINE_VERSION = "15-robust-svg-conversion";
 const MAX_OUTPUT = 4 * 1024 * 1024;
 const MAX_DEPENDENCY_FILES = 200;
 const MAX_DEPENDENCY_TOTAL_BYTES = 200 * 1024 * 1024;
@@ -238,13 +238,118 @@ export class RenderService {
   }
   private async convertToSvg(input: string, outputType: EnginePlan["outputType"], work: string, settings: TikzSettings): Promise<string> {
     const output = path.join(work, "main.svg");
+
     if (outputType === "pdf") {
       const mutool = settings.mutoolPath.trim() || "mutool";
-      await this.runStrict(mutool, ["draw", "-q", "-o", output, input, "1"], work, settings.compileTimeout);
+
+      // MuPDF/Windows builds can successfully finish the draw command while
+      // not materializing the requested SVG path in every invocation mode.
+      // Capture SVG on stdout first, then fall back to a direct file output.
+      const captureArgs = ["draw", "-q", "-F", "svg", "-O", "text=path,no-reuse-images", "-o", "-", input, "1"];
+      const captured = await this.runCapture(mutool, captureArgs, work, settings.compileTimeout);
+      const stdout = String(captured.stdout ?? "");
+      const svgStart = stdout.search(/<svg\\b/i);
+      if (svgStart >= 0) await fs.writeFile(output, stdout.slice(svgStart), "utf8");
+
+      if (!await this.exists(output)) {
+        await this.runStrict(
+          mutool,
+          ["draw", "-q", "-F", "svg", "-O", "text=path,no-reuse-images", "-o", output, input, "1"],
+          work,
+          settings.compileTimeout,
+        );
+      }
+
+      // Some MuPDF builds add a page suffix even for a single page.
+      if (!await this.exists(output)) {
+        const candidates = [path.join(work, "main-1.svg"), path.join(work, "main-01.svg")];
+        for (const candidate of candidates) {
+          if (await this.exists(candidate)) {
+            await fs.rename(candidate, output);
+            break;
+          }
+        }
+      }
     } else {
-      await this.runStrict(settings.dvisvgmPath, ["--no-fonts", "--exact-bbox", "--embed-bitmaps", input, "-o", output], work, settings.compileTimeout);
+      const dvisvgm = settings.dvisvgmPath.trim() || "dvisvgm";
+      let dvisvgmError: unknown = undefined;
+
+      try {
+        // Variant 1 emits standalone path elements rather than reusable
+        // <use> references, which is safer for inline SVG in Obsidian.
+        await this.runStrict(
+          dvisvgm,
+          ["--exact-bbox", "--no-fonts=1", "--verbosity=0", input, "-o", output],
+          work,
+          settings.compileTimeout,
+        );
+      } catch (error) {
+        dvisvgmError = error;
+      }
+
+      if (!await this.exists(output)) {
+        const candidates = [path.join(work, "main-1.svg"), path.join(work, "main-01.svg")];
+        for (const candidate of candidates) {
+          if (await this.exists(candidate)) {
+            await fs.rename(candidate, output);
+            break;
+          }
+        }
+      }
+
+      // XDV/DVI conversion can fail on individual dvisvgm builds. If that
+      // happens, create a PDF with dvipdfmx and use the same robust MuPDF
+      // path used for PDF engines.
+      if (!await this.exists(output)) {
+        const dvipdfmx = resolveSiblingExecutable(settings.latexPath, "dvipdfmx");
+        const pdf = path.join(work, "main-from-dvi.pdf");
+
+        try {
+          await this.runStrict(dvipdfmx, ["-o", pdf, input], work, settings.compileTimeout);
+          if (await this.exists(pdf)) {
+            const mutool = settings.mutoolPath.trim() || "mutool";
+            const captureArgs = ["draw", "-q", "-F", "svg", "-O", "text=path,no-reuse-images", "-o", "-", pdf, "1"];
+            const captured = await this.runCapture(mutool, captureArgs, work, settings.compileTimeout);
+            const stdout = String(captured.stdout ?? "");
+            const svgStart = stdout.search(/<svg\\b/i);
+            if (svgStart >= 0) await fs.writeFile(output, stdout.slice(svgStart), "utf8");
+
+            if (!await this.exists(output)) {
+              await this.runStrict(
+                mutool,
+                ["draw", "-q", "-F", "svg", "-O", "text=path,no-reuse-images", "-o", output, pdf, "1"],
+                work,
+                settings.compileTimeout,
+              );
+            }
+
+            if (!await this.exists(output)) {
+              const candidates = [path.join(work, "main-from-dvi-1.svg"), path.join(work, "main-from-dvi-01.svg")];
+              for (const candidate of candidates) {
+                if (await this.exists(candidate)) {
+                  await fs.rename(candidate, output);
+                  break;
+                }
+              }
+            }
+          }
+        } catch (fallbackError) {
+          const dviMessage = dvisvgmError instanceof Error ? dvisvgmError.message : String(dvisvgmError ?? "unknown dvisvgm error");
+          const fallbackMessage = fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
+          throw new RenderError(
+            `DVI/XDV to SVG conversion failed. dvisvgm: ${dviMessage}\\nDVI→PDF→SVG fallback: ${fallbackMessage}`,
+          );
+        }
+      }
     }
-    if (!await this.exists(output)) throw new RenderError("The vector converter completed without producing an SVG file.");
+
+    if (!await this.exists(output)) {
+      const files = await fs.readdir(work).catch(() => []);
+      throw new RenderError(
+        `The vector converter completed without producing an SVG file. Files in work directory: ${files.join(", ")}`,
+      );
+    }
+
     return sanitizeSvg(await fs.readFile(output, "utf8"));
   }
 
@@ -292,6 +397,19 @@ export class RenderService {
         exitCode: typeof x.code === "number" ? x.code : undefined,
         timedOut: x.code === "ETIMEDOUT" || x.killed,
       };
+    }
+  }
+
+  private async runCapture(executable: string, args: string[], cwd: string, timeout: number): Promise<{ stdout: string; stderr: string }> {
+    try {
+      const result = await execFileAsync(executable, args, { cwd, timeout, windowsHide: true, maxBuffer: MAX_OUTPUT, env: buildTeXEnvironment(cwd, undefined, [], this.app) });
+      return { stdout: String(result.stdout ?? ""), stderr: String(result.stderr ?? "") };
+    } catch (error) {
+      const x = error as NodeJS.ErrnoException & { killed?: boolean; stdout?: string; stderr?: string };
+      if (x.code === "ENOENT") throw new RenderError(`Executable not found: ${executable}`, x.message);
+      if (x.code === "ETIMEDOUT" || x.killed) throw new RenderError(`Process timed out after ${timeout} ms: ${executable}`, x.stderr ?? x.message);
+      if (x.code === "EACCES") throw new RenderError(`Permission denied: ${executable}`, x.message);
+      throw new RenderError(`Process failed: ${executable}`, [x.stderr, x.stdout, x.message].filter(Boolean).join("\\n"));
     }
   }
 
