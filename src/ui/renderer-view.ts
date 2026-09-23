@@ -151,7 +151,7 @@ export class TikzRendererView extends MarkdownRenderChild {
     const outsidePointerDown = (e: PointerEvent): void => { if (!panel.hidden && (!(e.target instanceof Node) || (!shell.contains(e.target) && !panel.contains(e.target)))) closePanel(); }; doc.addEventListener("pointerdown", outsidePointerDown, true);
     const escape = (e: KeyboardEvent): void => { if (e.key === "Escape" && !panel.hidden) { closePanel(); menu.focus(); } }; doc.addEventListener("keydown", escape, true);
     svg.addEventListener("click", e => { e.preventDefault(); e.stopPropagation(); });
-    viewport.addEventListener("pointerdown", e => { if (e.button !== 0 || (!isReadingMode() && zoom <= 1)) return; dragging = true; lastX = e.clientX; lastY = e.clientY; viewport.setPointerCapture(e.pointerId); e.preventDefault(); e.stopPropagation(); });
+    viewport.addEventListener("pointerdown", e => { if (e.button !== 0 || (!isReadingMode() && zoom <= 1)) return; if (isReadingMode()) readingAutoFit = false; dragging = true; lastX = e.clientX; lastY = e.clientY; viewport.setPointerCapture(e.pointerId); e.preventDefault(); e.stopPropagation(); });
     viewport.addEventListener("pointermove", e => { if (!dragging) return; panX += e.clientX - lastX; panY += e.clientY - lastY; lastX = e.clientX; lastY = e.clientY; clampCurrentPan(); applySvgTransform(); e.preventDefault(); e.stopPropagation(); });
     const stopDragging = (): void => { if (!dragging) return; dragging = false; clampCurrentPan(); if (!isReadingMode()) persistEditViewState(); viewport.classList.remove("is-dragging"); };
     viewport.addEventListener("pointerup", stopDragging); viewport.addEventListener("pointercancel", stopDragging); viewport.addEventListener("lostpointercapture", stopDragging);
