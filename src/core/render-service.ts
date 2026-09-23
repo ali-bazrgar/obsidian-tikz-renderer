@@ -657,7 +657,7 @@ function resolveSiblingExecutable(configured: string, name: string): string {
   if (path.isAbsolute(value)) return path.join(path.dirname(value), process.platform === "win32" ? name + ".exe" : name);
   return name;
 }
-function escapeTex(value: string): string { return value.replace(/[{}%\\]/g, "\\function escapeTex(value: string): string { return value.replace(/[{}%\\]/g, "\\$&"); }"); }
+function escapeTex(value: string): string { return value.replace(/[{}%\\]/g, "\\$&"); }
 
 function sanitizeSvg(svg: string): string {
   return svg
