@@ -56,16 +56,17 @@ export class TikzRendererView extends MarkdownRenderChild {
     let zoom = initialEditState.zoom, panX = initialEditState.panX, panY = initialEditState.panY, naturalWidth = 0, naturalHeight = 0, viewportHeight = initialEditState.viewportHeight, dragging = false, lastX = 0, lastY = 0;
     let readingMode = false;
     const getCurrentMode = (): "reading" | "writing" => {
-      // For an active MarkdownView, getMode() is authoritative while its
-      // inner preview/source DOM is being rebuilt during a mode transition.
-      const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
-      if (markdownView?.containerEl.contains(shell)) {
-        return markdownView.getMode() === "preview" ? "reading" : "writing";
-      }
-
-      // Fallback for embedded/non-active rendering contexts.
+      // The renderer's actual DOM position is the authoritative source for
+      // this instance. During a Read/Write transition Obsidian can update
+      // MarkdownView.getMode() before it finishes moving/rebuilding the
+      // renderer DOM. Using getMode() first therefore creates a transient
+      // false "reading" state while the figure is already in Write mode.
       if (shell.closest(".markdown-source-view")) return "writing";
       if (shell.closest(".markdown-preview-view")) return "reading";
+
+      // Fallback only for embedded/non-active rendering contexts where the
+      // renderer is not currently inside either standard Markdown container.
+      const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
       return markdownView?.getMode() === "preview" ? "reading" : "writing";
     };
     const isReadingMode = (): boolean => getCurrentMode() === "reading";
@@ -182,6 +183,11 @@ export class TikzRendererView extends MarkdownRenderChild {
     menu.addEventListener("keydown", e => {
       if ((e.key === "Enter" || e.key === " ") && !isReadingMode()) togglePanel(e);
     });
+    // Pointer-down is used for the actual control activation because Obsidian
+    // can rebuild/interpose editor overlays during a mode switch before the
+    // synthetic click event is dispatched. The handler itself still verifies
+    // the current mode, so Read remains non-interactive.
+    menu.addEventListener("pointerdown", togglePanel, true);
     const outsidePointerDown = (e: PointerEvent): void => { if (!panel.hidden && (!(e.target instanceof Node) || (!shell.contains(e.target) && !panel.contains(e.target)))) closePanel(); }; doc.addEventListener("pointerdown", outsidePointerDown, true);
     menu.addEventListener("click", togglePanel);
     const escape = (e: KeyboardEvent): void => { if (e.key === "Escape" && !panel.hidden) { closePanel(); menu.focus(); } }; doc.addEventListener("keydown", escape, true);
@@ -265,7 +271,7 @@ export class TikzRendererView extends MarkdownRenderChild {
       }
     };
     this.applyExternalState = (state: TikzViewState): void => { if (!isReadingMode()) applyLocalViewState(state); };
-    this.cleanup = () => { if (TikzRendererView.activeViews.get(stateKey) === this) TikzRendererView.activeViews.delete(stateKey); doc.removeEventListener("pointerdown", outsidePointerDown, true); doc.removeEventListener("keydown", escape, true); menu.removeEventListener("click", togglePanel); this.wheelViewport = undefined; this.wheelCallback = undefined; win?.removeEventListener("scroll", reposition, true); win?.removeEventListener("resize", reposition); observer.disconnect(); resizeObserver.disconnect(); closePanel(); panel.remove(); TikzRendererView.allViews.delete(this); TikzRendererView.removeGlobalWheelListenerIfUnused(); this.applyExternalState = undefined; this.refreshModeState = undefined; this.cleanup = undefined; };
+    this.cleanup = () => { if (TikzRendererView.activeViews.get(stateKey) === this) TikzRendererView.activeViews.delete(stateKey); doc.removeEventListener("pointerdown", outsidePointerDown, true); doc.removeEventListener("keydown", escape, true); menu.removeEventListener("pointerdown", togglePanel, true); this.wheelViewport = undefined; this.wheelCallback = undefined; win?.removeEventListener("scroll", reposition, true); win?.removeEventListener("resize", reposition); observer.disconnect(); resizeObserver.disconnect(); closePanel(); panel.remove(); TikzRendererView.allViews.delete(this); TikzRendererView.removeGlobalWheelListenerIfUnused(); this.applyExternalState = undefined; this.refreshModeState = undefined; this.cleanup = undefined; };
   }
   onunload(): void { this.cleanup?.(); this.containerEl.empty(); }
   dispose(emptyContainer = true): void { this.cleanup?.(); if (emptyContainer && this.containerEl.isConnected) this.containerEl.empty(); }
