@@ -22,7 +22,7 @@ const rendererChecks = [
   ['svg.addEventListener("click", e => { e.preventDefault(); e.stopPropagation(); })', "non-clickable inline SVG"],
   ['const getCurrentMode = (): "reading" | "writing" => {', "Reading/Write mode detection"],
   ['markdownView?.containerEl.contains(shell)', "active MarkdownView mode ownership"],
-  ['menu.addEventListener("click", togglePanel)', "direct TikZ controls click handling"],
+  ['menu.addEventListener("pointerdown", togglePanel, true)', "direct TikZ controls pointer handling"],
   ['shell.dataset.mode = nextReadingMode ? "reading" : "writing"', "Reading/Writing mode state"],
   ['this.service.render(this.source, this.kind, this.sourcePath)', "source-path-aware re-render"],
 ];
