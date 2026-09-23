@@ -17,6 +17,7 @@ export class TikzRendererView extends MarkdownRenderChild {
   private static readonly allViews = new Set<TikzRendererView>();
   private static wheelWindow?: Window;
   private static wheelHandler?: (event: WheelEvent) => void;
+  private static readonly handledWheelEvents = new WeakSet<WheelEvent>();
   private wheelViewport?: HTMLElement;
   private wheelCallback?: (event: WheelEvent) => void;
   private static readonly viewStates = new Map<string, TikzViewState>();
@@ -183,13 +184,11 @@ export class TikzRendererView extends MarkdownRenderChild {
     menu.addEventListener("keydown", e => {
       if ((e.key === "Enter" || e.key === " ") && !isReadingMode()) togglePanel(e);
     });
-    // Pointer-down is used for the actual control activation because Obsidian
-    // can rebuild/interpose editor overlays during a mode switch before the
-    // synthetic click event is dispatched. The handler itself still verifies
-    // the current mode, so Read remains non-interactive.
+    // Pointer-down is the single activation event for the control. Using both
+    // pointerdown and click would toggle twice: pointerdown opens the panel and
+    // the synthetic click immediately closes it again.
     menu.addEventListener("pointerdown", togglePanel, true);
     const outsidePointerDown = (e: PointerEvent): void => { if (!panel.hidden && (!(e.target instanceof Node) || (!shell.contains(e.target) && !panel.contains(e.target)))) closePanel(); }; doc.addEventListener("pointerdown", outsidePointerDown, true);
-    menu.addEventListener("click", togglePanel);
     const escape = (e: KeyboardEvent): void => { if (e.key === "Escape" && !panel.hidden) { closePanel(); menu.focus(); } }; doc.addEventListener("keydown", escape, true);
     svg.addEventListener("click", e => { e.preventDefault(); e.stopPropagation(); });
     viewport.addEventListener("pointerdown", e => {
@@ -211,6 +210,12 @@ export class TikzRendererView extends MarkdownRenderChild {
       const target = e.target;
       if (target instanceof HTMLInputElement || target instanceof HTMLButtonElement) return;
       if (!ensureIntrinsicSize()) return;
+      // The renderer has both a delegated window listener and a direct
+      // viewport listener so it remains robust to Obsidian/CodeMirror event
+      // interception during mode transitions. Only the first listener that
+      // actually handles a wheel event may mutate zoom/state.
+      if (TikzRendererView.handledWheelEvents.has(e)) return;
+      TikzRendererView.handledWheelEvents.add(e);
 
       e.preventDefault();
       e.stopPropagation();
@@ -248,6 +253,10 @@ export class TikzRendererView extends MarkdownRenderChild {
     };
     this.wheelViewport = viewport;
     this.wheelCallback = wheel;
+    // Direct capture keeps wheel zoom alive even when an editor-level
+    // listener interferes with delegated window handling during transitions.
+    // The global listener remains as the fallback for overlay-delivered events.
+    viewport.addEventListener("wheel", wheel, { passive: false, capture: true });
     TikzRendererView.ensureGlobalWheelListener(win);
     const observer = new MutationObserver(() => {
       const changed = updateMode();
@@ -271,7 +280,7 @@ export class TikzRendererView extends MarkdownRenderChild {
       }
     };
     this.applyExternalState = (state: TikzViewState): void => { if (!isReadingMode()) applyLocalViewState(state); };
-    this.cleanup = () => { if (TikzRendererView.activeViews.get(stateKey) === this) TikzRendererView.activeViews.delete(stateKey); doc.removeEventListener("pointerdown", outsidePointerDown, true); doc.removeEventListener("keydown", escape, true); menu.removeEventListener("pointerdown", togglePanel, true); this.wheelViewport = undefined; this.wheelCallback = undefined; win?.removeEventListener("scroll", reposition, true); win?.removeEventListener("resize", reposition); observer.disconnect(); resizeObserver.disconnect(); closePanel(); panel.remove(); TikzRendererView.allViews.delete(this); TikzRendererView.removeGlobalWheelListenerIfUnused(); this.applyExternalState = undefined; this.refreshModeState = undefined; this.cleanup = undefined; };
+    this.cleanup = () => { if (TikzRendererView.activeViews.get(stateKey) === this) TikzRendererView.activeViews.delete(stateKey); doc.removeEventListener("pointerdown", outsidePointerDown, true); doc.removeEventListener("keydown", escape, true); menu.removeEventListener("pointerdown", togglePanel, true); viewport.removeEventListener("wheel", wheel, true); this.wheelViewport = undefined; this.wheelCallback = undefined; win?.removeEventListener("scroll", reposition, true); win?.removeEventListener("resize", reposition); observer.disconnect(); resizeObserver.disconnect(); closePanel(); panel.remove(); TikzRendererView.allViews.delete(this); TikzRendererView.removeGlobalWheelListenerIfUnused(); this.applyExternalState = undefined; this.refreshModeState = undefined; this.cleanup = undefined; };
   }
   onunload(): void { this.cleanup?.(); this.containerEl.empty(); }
   dispose(emptyContainer = true): void { this.cleanup?.(); if (emptyContainer && this.containerEl.isConnected) this.containerEl.empty(); }
