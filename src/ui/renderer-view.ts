@@ -107,6 +107,9 @@ export class TikzRendererView extends MarkdownRenderChild {
           const naturalViewportHeight = clampViewportHeight(naturalHeight * zoom);
           if (viewportHeight < naturalViewportHeight * 0.75) {
             viewportHeight = naturalViewportHeight;
+            const repairedState = { ...shared, viewportHeight: naturalViewportHeight };
+            TikzRendererView.viewStates.set(stateKey, repairedState);
+            saveViewState(stateKey, repairedState);
             applySvgTransform();
             syncViewportGeometry();
           }
