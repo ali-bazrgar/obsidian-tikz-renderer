@@ -21,3 +21,12 @@ jobs:
           test -s main.js
           test -s manifest.json
           test -s styles.css
+      - name: Upload plugin build
+        uses: actions/upload-artifact@v4
+        with:
+          name: obsidian-tikz-renderer-build
+          path: |
+            main.js
+            manifest.json
+            styles.css
+            meta.json

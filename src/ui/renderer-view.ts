@@ -17,13 +17,8 @@ export class TikzRendererView extends MarkdownRenderChild {
   private static readonly allViews = new Set<TikzRendererView>();
   private static wheelWindow?: Window;
   private static wheelHandler?: (event: WheelEvent) => void;
-  private static pointerWindow?: Window;
-  private static pointerMoveHandler?: (event: PointerEvent) => void;
-  private static pointerDownHandler?: (event: PointerEvent) => void;
   private wheelViewport?: HTMLElement;
   private wheelCallback?: (event: WheelEvent) => void;
-  private menuElement?: HTMLElement;
-  private menuCallback?: (event: Event) => void;
   private static readonly viewStates = new Map<string, TikzViewState>();
   private static readonly themeStates = new Map<string, TikzThemeState>();
 
@@ -61,15 +56,16 @@ export class TikzRendererView extends MarkdownRenderChild {
     let zoom = initialEditState.zoom, panX = initialEditState.panX, panY = initialEditState.panY, naturalWidth = 0, naturalHeight = 0, viewportHeight = initialEditState.viewportHeight, dragging = false, lastX = 0, lastY = 0;
     let readingMode = false;
     const getCurrentMode = (): "reading" | "writing" => {
-      // Determine the mode from the renderer's own containing Obsidian view
-      // first. During a Read/Write transition, the active MarkdownView can
-      // briefly report the previous mode while this render child is already
-      // attached to the new view.
+      // For an active MarkdownView, getMode() is authoritative while its
+      // inner preview/source DOM is being rebuilt during a mode transition.
+      const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
+      if (markdownView?.containerEl.contains(shell)) {
+        return markdownView.getMode() === "preview" ? "reading" : "writing";
+      }
+
+      // Fallback for embedded/non-active rendering contexts.
       if (shell.closest(".markdown-source-view")) return "writing";
       if (shell.closest(".markdown-preview-view")) return "reading";
-
-      // Fallback for an embedded/non-active rendering context.
-      const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
       return markdownView?.getMode() === "preview" ? "reading" : "writing";
     };
     const isReadingMode = (): boolean => getCurrentMode() === "reading";
@@ -187,14 +183,12 @@ export class TikzRendererView extends MarkdownRenderChild {
       if ((e.key === "Enter" || e.key === " ") && !isReadingMode()) togglePanel(e);
     });
     const outsidePointerDown = (e: PointerEvent): void => { if (!panel.hidden && (!(e.target instanceof Node) || (!shell.contains(e.target) && !panel.contains(e.target)))) closePanel(); }; doc.addEventListener("pointerdown", outsidePointerDown, true);
+    menu.addEventListener("click", togglePanel);
     const escape = (e: KeyboardEvent): void => { if (e.key === "Escape" && !panel.hidden) { closePanel(); menu.focus(); } }; doc.addEventListener("keydown", escape, true);
     svg.addEventListener("click", e => { e.preventDefault(); e.stopPropagation(); });
     // Synchronize as soon as the pointer enters the figure. This removes
     // the old behavior where returning from Read to Write required one click
     // before the saved Write zoom/pan state was applied.
-    viewport.addEventListener("pointerenter", () => {
-      updateMode();
-    });
     viewport.addEventListener("pointerdown", e => {
       updateMode();
       if (readingMode || e.button !== 0 || zoom <= 1) return;
@@ -251,10 +245,7 @@ export class TikzRendererView extends MarkdownRenderChild {
     };
     this.wheelViewport = viewport;
     this.wheelCallback = wheel;
-    this.menuElement = menu;
-    this.menuCallback = togglePanel;
     TikzRendererView.ensureGlobalWheelListener(win);
-    TikzRendererView.ensureGlobalPointerListeners(win);
     const observer = new MutationObserver(() => {
       const changed = updateMode();
       if (changed) applyZoom();
@@ -277,7 +268,7 @@ export class TikzRendererView extends MarkdownRenderChild {
       }
     };
     this.applyExternalState = (state: TikzViewState): void => { if (!isReadingMode()) applyLocalViewState(state); };
-    this.cleanup = () => { if (TikzRendererView.activeViews.get(stateKey) === this) TikzRendererView.activeViews.delete(stateKey); doc.removeEventListener("pointerdown", outsidePointerDown, true); doc.removeEventListener("keydown", escape, true); menu.removeEventListener("pointerdown", togglePanel); this.wheelViewport = undefined; this.wheelCallback = undefined; this.menuElement = undefined; this.menuCallback = undefined; win?.removeEventListener("scroll", reposition, true); win?.removeEventListener("resize", reposition); observer.disconnect(); resizeObserver.disconnect(); closePanel(); panel.remove(); TikzRendererView.allViews.delete(this); TikzRendererView.removeGlobalWheelListenerIfUnused(); TikzRendererView.removeGlobalPointerListenersIfUnused(); this.applyExternalState = undefined; this.refreshModeState = undefined; this.cleanup = undefined; };
+    this.cleanup = () => { if (TikzRendererView.activeViews.get(stateKey) === this) TikzRendererView.activeViews.delete(stateKey); doc.removeEventListener("pointerdown", outsidePointerDown, true); doc.removeEventListener("keydown", escape, true); menu.removeEventListener("click", togglePanel); this.wheelViewport = undefined; this.wheelCallback = undefined; win?.removeEventListener("scroll", reposition, true); win?.removeEventListener("resize", reposition); observer.disconnect(); resizeObserver.disconnect(); closePanel(); panel.remove(); TikzRendererView.allViews.delete(this); TikzRendererView.removeGlobalWheelListenerIfUnused(); this.applyExternalState = undefined; this.refreshModeState = undefined; this.cleanup = undefined; };
   }
   onunload(): void { this.cleanup?.(); this.containerEl.empty(); }
   dispose(emptyContainer = true): void { this.cleanup?.(); if (emptyContainer && this.containerEl.isConnected) this.containerEl.empty(); }
@@ -329,61 +320,6 @@ export class TikzRendererView extends MarkdownRenderChild {
     this.wheelWindow.removeEventListener("wheel", this.wheelHandler, true);
     this.wheelWindow = undefined;
     this.wheelHandler = undefined;
-  }
-
-  private static ensureGlobalPointerListeners(win: Window | null): void {
-    if (!win || this.pointerDownHandler || this.pointerMoveHandler) return;
-    this.pointerWindow = win;
-
-    // Pointer movement is used only for mode synchronization. This means
-    // returning from Read to Write no longer requires a click on the figure
-    // before the saved Write geometry becomes active.
-    this.pointerMoveHandler = (event: PointerEvent): void => {
-      const x = event.clientX;
-      const y = event.clientY;
-      if (!Number.isFinite(x) || !Number.isFinite(y)) return;
-      for (const view of Array.from(this.allViews)) {
-        const viewport = view.wheelViewport;
-        if (!viewport || !viewport.isConnected) continue;
-        const rect = viewport.getBoundingClientRect();
-        if (rect.width <= 0 || rect.height <= 0) continue;
-        if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) {
-          view.refreshModeState?.();
-        }
-      }
-    };
-
-    // Use a capture-phase pointerdown on the stable window. If an Obsidian
-    // editing overlay happens to receive the click instead of our button,
-    // geometry hit-testing still opens the TikZ controls.
-    this.pointerDownHandler = (event: PointerEvent): void => {
-      if (event.button !== 0) return;
-      const x = event.clientX;
-      const y = event.clientY;
-      if (!Number.isFinite(x) || !Number.isFinite(y)) return;
-
-      for (const view of Array.from(this.allViews).reverse()) {
-        const menu = view.menuElement;
-        if (!menu || !menu.isConnected) continue;
-        const rect = menu.getBoundingClientRect();
-        if (rect.width <= 0 || rect.height <= 0) continue;
-        if (x < rect.left || x > rect.right || y < rect.top || y > rect.bottom) continue;
-        view.menuCallback?.(event);
-        return;
-      }
-    };
-
-    win.addEventListener("pointermove", this.pointerMoveHandler, { capture: true });
-    win.addEventListener("pointerdown", this.pointerDownHandler, { capture: true });
-  }
-
-  private static removeGlobalPointerListenersIfUnused(): void {
-    if (this.allViews.size > 0 || !this.pointerWindow) return;
-    if (this.pointerMoveHandler) this.pointerWindow.removeEventListener("pointermove", this.pointerMoveHandler, true);
-    if (this.pointerDownHandler) this.pointerWindow.removeEventListener("pointerdown", this.pointerDownHandler, true);
-    this.pointerWindow = undefined;
-    this.pointerMoveHandler = undefined;
-    this.pointerDownHandler = undefined;
   }
 
   static syncAllModes(): void {

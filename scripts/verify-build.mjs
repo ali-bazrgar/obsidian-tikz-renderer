@@ -21,11 +21,16 @@ const rendererChecks = [
   ['this.result.assetPath = await this.exportService.saveSvg', "SVG asset persistence"],
   ['svg.addEventListener("click", e => { e.preventDefault(); e.stopPropagation(); })', "non-clickable inline SVG"],
   ['const getCurrentMode = (): "reading" | "writing" => {', "Reading/Write mode detection"],
+  ['markdownView?.containerEl.contains(shell)', "active MarkdownView mode ownership"],
+  ['menu.addEventListener("click", togglePanel)', "direct TikZ controls click handling"],
   ['shell.dataset.mode = nextReadingMode ? "reading" : "writing"', "Reading/Writing mode state"],
   ['this.service.render(this.source, this.kind, this.sourcePath)', "source-path-aware re-render"],
 ];
 for (const [needle, label] of rendererChecks) {
   if (!renderer.includes(needle)) throw new Error("Missing renderer invariant: " + label);
+}
+if (renderer.includes("ensureGlobalPointerListeners") || renderer.includes("pointerMoveHandler") || renderer.includes("pointerDownHandler")) {
+  throw new Error("Renderer must not use global pointer-event workarounds for lifecycle synchronization.");
 }
 if (renderer.includes("svgDataUri")) throw new Error("Renderer must not use SVG data URIs.");
 
