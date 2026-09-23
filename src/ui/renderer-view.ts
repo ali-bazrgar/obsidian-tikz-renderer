@@ -61,15 +61,12 @@ export class TikzRendererView extends MarkdownRenderChild {
       viewport.style.height = `${viewportHeight}px`;
     };
     const clampCurrentPan = (): void => {
+      // Keep pan coordinates finite, but intentionally do not clamp them to
+      // the viewport edges. The figure behaves like an unbounded canvas:
+      // users can drag it freely in any direction and return to it later.
       syncViewportGeometry();
-      const viewportWidth = getViewportWidth();
-      const viewportH = getViewportHeight();
-      const contentWidth = Math.max(1, naturalWidth * zoom);
-      const contentHeight = Math.max(1, naturalHeight * zoom);
-      const minX = Math.min(0, viewportWidth - contentWidth);
-      const minY = Math.min(0, viewportH - contentHeight);
-      panX = clampNumber(Number.isFinite(panX) ? panX : 0, minX, 0);
-      panY = clampNumber(Number.isFinite(panY) ? panY : 0, minY, 0);
+      panX = Number.isFinite(panX) ? panX : 0;
+      panY = Number.isFinite(panY) ? panY : 0;
     };
     const getContentAlignmentOffset = (): { x: number; y: number } => {
       const width = getViewportWidth();
@@ -127,8 +124,6 @@ export class TikzRendererView extends MarkdownRenderChild {
     viewport.addEventListener("pointermove", e => { if (!dragging) return; panX += e.clientX - lastX; panY += e.clientY - lastY; lastX = e.clientX; lastY = e.clientY; clampCurrentPan(); applySvgTransform(); e.preventDefault(); e.stopPropagation(); });
     const stopDragging = (): void => { if (!dragging) return; dragging = false; clampCurrentPan(); if (!isReadingMode()) persistEditViewState(); viewport.classList.remove("is-dragging"); };
     viewport.addEventListener("pointerup", stopDragging); viewport.addEventListener("pointercancel", stopDragging); viewport.addEventListener("lostpointercapture", stopDragging);
-    const resetReadView = (): void => { if (!isReadingMode() || !shell.isConnected) return; dragging = false; const shared = TikzRendererView.viewStates.get(stateKey) ?? initialEditState; applyLocalViewState(shared); };
-    viewport.addEventListener("pointerleave", resetReadView);
     const wheel = (e: WheelEvent): void => {
       const reading = isReadingMode();
       if (!shell.isConnected) return;
