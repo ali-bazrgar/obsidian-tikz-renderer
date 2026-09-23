@@ -240,34 +240,38 @@ export class RenderService {
     const output = path.join(work, "main.svg");
 
     if (outputType === "pdf") {
-      const mutool = settings.mutoolPath.trim() || "mutool";
-
-      // MuPDF/Windows builds can successfully finish the draw command while
-      // not materializing the requested SVG path in every invocation mode.
-      // Capture SVG on stdout first, then fall back to a direct file output.
-      const captureArgs = ["draw", "-q", "-F", "svg", "-O", "text=path,no-reuse-images", "-o", "-", input, "1"];
-      const captured = await this.runCapture(mutool, captureArgs, work, settings.compileTimeout);
-      const stdout = String(captured.stdout ?? "");
-      const svgStart = stdout.search(/<svg\b/i);
-      if (svgStart >= 0) await fs.writeFile(output, stdout.slice(svgStart), "utf8");
-
-      if (!await this.exists(output)) {
-        await this.runStrict(
-          mutool,
-          ["draw", "-q", "-F", "svg", "-O", "text=path,no-reuse-images", "-o", output, input, "1"],
-          work,
-          settings.compileTimeout,
-        );
-      }
-
-      // Some MuPDF builds add a page suffix even for a single page.
-      if (!await this.exists(output)) {
-        const candidates = [path.join(work, "main-1.svg"), path.join(work, "main-01.svg")];
-        for (const candidate of candidates) {
-          if (await this.exists(candidate)) {
-            await fs.rename(candidate, output);
-            break;
+      await this.convertPdfToSvg(input, output, work, settings);
+    } else if (outputType === "xdv") {
+      // XeLaTeX produces XDV. XDV is not ordinary DVI, and passing it
+      // directly through dvisvgm can yield incorrect glyph/pattern output
+      // on Windows builds. Convert XDV with xdvipdfmx first, then use the
+      // same PDF->SVG path used by PDF engines.
+      const xdvipdfmx = resolveSiblingExecutable(settings.xelatexPath, "xdvipdfmx");
+      const pdf = path.join(work, "main-from-xdv.pdf");
+      try {
+        await this.runStrict(xdvipdfmx, ["-o", pdf, input], work, settings.compileTimeout);
+        if (!await this.exists(pdf)) throw new RenderError("xdvipdfmx completed without producing a PDF file.");
+        await this.convertPdfToSvg(pdf, output, work, settings);
+      } catch (xdvError) {
+        // Keep the dvisvgm path as a compatibility fallback so existing
+        // installations/features are not removed if xdvipdfmx is unavailable.
+        let dvisvgmError: unknown = undefined;
+        const dvisvgm = settings.dvisvgmPath.trim() || "dvisvgm";
+        try {
+          await this.runStrict(dvisvgm, ["--exact-bbox", "--no-fonts=1", "--verbosity=0", input, "-o", output], work, settings.compileTimeout);
+        } catch (error) {
+          dvisvgmError = error;
+        }
+        if (!await this.exists(output)) {
+          const candidates = [path.join(work, "main-1.svg"), path.join(work, "main-01.svg")];
+          for (const candidate of candidates) {
+            if (await this.exists(candidate)) { await fs.rename(candidate, output); break; }
           }
+        }
+        if (!await this.exists(output)) {
+          const xdvMessage = xdvError instanceof Error ? xdvError.message : String(xdvError);
+          const dvisvgmMessage = dvisvgmError instanceof Error ? dvisvgmError.message : String(dvisvgmError ?? "no dvisvgm diagnostic");
+          throw new RenderError(`XDV to SVG conversion failed. xdvipdfmx: ${xdvMessage}\ndvisvgm fallback: ${dvisvgmMessage}`);
         }
       }
     } else {
@@ -275,14 +279,7 @@ export class RenderService {
       let dvisvgmError: unknown = undefined;
 
       try {
-        // Variant 1 emits standalone path elements rather than reusable
-        // <use> references, which is safer for inline SVG in Obsidian.
-        await this.runStrict(
-          dvisvgm,
-          ["--exact-bbox", "--no-fonts=1", "--verbosity=0", input, "-o", output],
-          work,
-          settings.compileTimeout,
-        );
+        await this.runStrict(dvisvgm, ["--exact-bbox", "--no-fonts=1", "--verbosity=0", input, "-o", output], work, settings.compileTimeout);
       } catch (error) {
         dvisvgmError = error;
       }
@@ -290,69 +287,59 @@ export class RenderService {
       if (!await this.exists(output)) {
         const candidates = [path.join(work, "main-1.svg"), path.join(work, "main-01.svg")];
         for (const candidate of candidates) {
-          if (await this.exists(candidate)) {
-            await fs.rename(candidate, output);
-            break;
-          }
+          if (await this.exists(candidate)) { await fs.rename(candidate, output); break; }
         }
       }
 
-      // XDV/DVI conversion can fail on individual dvisvgm builds. If that
-      // happens, create a PDF with dvipdfmx and use the same robust MuPDF
-      // path used for PDF engines.
       if (!await this.exists(output)) {
         const dvipdfmx = resolveSiblingExecutable(settings.latexPath, "dvipdfmx");
         const pdf = path.join(work, "main-from-dvi.pdf");
-
         try {
           await this.runStrict(dvipdfmx, ["-o", pdf, input], work, settings.compileTimeout);
-          if (await this.exists(pdf)) {
-            const mutool = settings.mutoolPath.trim() || "mutool";
-            const captureArgs = ["draw", "-q", "-F", "svg", "-O", "text=path,no-reuse-images", "-o", "-", pdf, "1"];
-            const captured = await this.runCapture(mutool, captureArgs, work, settings.compileTimeout);
-            const stdout = String(captured.stdout ?? "");
-            const svgStart = stdout.search(/<svg\b/i);
-            if (svgStart >= 0) await fs.writeFile(output, stdout.slice(svgStart), "utf8");
-
-            if (!await this.exists(output)) {
-              await this.runStrict(
-                mutool,
-                ["draw", "-q", "-F", "svg", "-O", "text=path,no-reuse-images", "-o", output, pdf, "1"],
-                work,
-                settings.compileTimeout,
-              );
-            }
-
-            if (!await this.exists(output)) {
-              const candidates = [path.join(work, "main-from-dvi-1.svg"), path.join(work, "main-from-dvi-01.svg")];
-              for (const candidate of candidates) {
-                if (await this.exists(candidate)) {
-                  await fs.rename(candidate, output);
-                  break;
-                }
-              }
-            }
-          }
+          if (!await this.exists(pdf)) throw new RenderError("dvipdfmx completed without producing a PDF file.");
+          await this.convertPdfToSvg(pdf, output, work, settings);
         } catch (fallbackError) {
           const dviMessage = dvisvgmError instanceof Error ? dvisvgmError.message : String(dvisvgmError ?? "unknown dvisvgm error");
           const fallbackMessage = fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
-          throw new RenderError(
-            `DVI/XDV to SVG conversion failed. dvisvgm: ${dviMessage}\\nDVI→PDF→SVG fallback: ${fallbackMessage}`,
-          );
+          throw new RenderError(`DVI to SVG conversion failed. dvisvgm: ${dviMessage}\nDVI→PDF→SVG fallback: ${fallbackMessage}`);
         }
       }
     }
 
     if (!await this.exists(output)) {
       const files = await fs.readdir(work).catch(() => []);
-      throw new RenderError(
-        `The vector converter completed without producing an SVG file. Files in work directory: ${files.join(", ")}`,
-      );
+      throw new RenderError(`The vector converter completed without producing an SVG file. Files in work directory: ${files.join(", ")}`);
     }
 
-    return sanitizeSvg(await fs.readFile(output, "utf8"));
+    const svg = await fs.readFile(output, "utf8");
+    if (!/<svg\b/i.test(svg)) {
+      throw new RenderError("The vector converter produced a file that is not valid SVG.");
+    }
+    return sanitizeSvg(svg);
   }
 
+  private async convertPdfToSvg(inputPdf: string, output: string, work: string, settings: TikzSettings): Promise<void> {
+    const mutool = settings.mutoolPath.trim() || "mutool";
+    // Ask MuPDF explicitly for SVG and vectorize text. Capturing stdout first
+    // avoids Windows builds that complete successfully but materialize a
+    // page-numbered filename instead of the requested output filename.
+    const captureArgs = ["draw", "-q", "-F", "svg", "-O", "text=path,no-reuse-images", "-o", "-", inputPdf, "1"];
+    const captured = await this.runCapture(mutool, captureArgs, work, settings.compileTimeout);
+    const stdout = String(captured.stdout ?? "");
+    const svgStart = stdout.search(/<svg\b/i);
+    if (svgStart >= 0) await fs.writeFile(output, stdout.slice(svgStart), "utf8");
+
+    if (!await this.exists(output)) {
+      await this.runStrict(mutool, ["draw", "-q", "-F", "svg", "-O", "text=path,no-reuse-images", "-o", output, inputPdf, "1"], work, settings.compileTimeout);
+    }
+
+    if (!await this.exists(output)) {
+      const base = path.basename(inputPdf, path.extname(inputPdf));
+      for (const candidate of [path.join(work, `${base}-1.svg`), path.join(work, `${base}-01.svg`), path.join(work, "main-1.svg"), path.join(work, "main-01.svg")]) {
+        if (await this.exists(candidate)) { await fs.rename(candidate, output); break; }
+      }
+    }
+  }
   private hash(source: string, kind: BlockKind, plan: EnginePlan, settings: TikzSettings, fingerprint: Array<{ path: string; digest: string }>, sourcePath?: string): string {
     return createHash("sha256")
       .update(JSON.stringify({
