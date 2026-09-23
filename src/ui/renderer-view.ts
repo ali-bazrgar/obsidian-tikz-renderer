@@ -162,8 +162,9 @@ export class TikzRendererView extends MarkdownRenderChild {
       if (!shell.isConnected) return;
       updateMode();
       if (readingMode) return;
+      const path = typeof e.composedPath === "function" ? e.composedPath() : [];
       const target = e.target;
-      if (!(target instanceof Node) || !viewport.contains(target)) return;
+      if (!(target instanceof Node) || (!viewport.contains(target) && !path.includes(viewport))) return;
       if (target instanceof HTMLInputElement || target instanceof HTMLButtonElement) return;
       if (!ensureIntrinsicSize()) return;
 
@@ -201,7 +202,7 @@ export class TikzRendererView extends MarkdownRenderChild {
       persistViewState();
       applyZoom();
     };
-    win?.addEventListener("wheel", wheel, { passive: false, capture: true });
+    viewport.addEventListener("wheel", wheel, { passive: false, capture: true });
     const observer = new MutationObserver(() => { const changed = updateMode(); if (changed) applyZoom(); else { applyTheme(); positionPanel(); } }); observer.observe(doc.body, { attributes: true, attributeFilter: ["class"], subtree: true });
     const resizeObserver = new ResizeObserver(() => {
       ensureViewportSize();
@@ -211,7 +212,7 @@ export class TikzRendererView extends MarkdownRenderChild {
     const reposition = (): void => positionPanel(); win?.addEventListener("scroll", reposition, true); win?.addEventListener("resize", reposition);
     buildMainPanel(); closePanel(); updateMode(); applyTheme(); ensureIntrinsicSize(); ensureViewportSize(); applyZoom();
     this.applyExternalState = (state: TikzViewState): void => { if (!isReadingMode()) applyLocalViewState(state); };
-    this.cleanup = () => { if (TikzRendererView.activeViews.get(stateKey) === this) TikzRendererView.activeViews.delete(stateKey); doc.removeEventListener("pointerdown", outsidePointerDown, true); doc.removeEventListener("keydown", escape, true); menu.removeEventListener("pointerdown", togglePanel); win?.removeEventListener("wheel", wheel, true); win?.removeEventListener("scroll", reposition, true); win?.removeEventListener("resize", reposition); observer.disconnect(); resizeObserver.disconnect(); closePanel(); panel.remove(); TikzRendererView.allViews.delete(this); this.applyExternalState = undefined; this.cleanup = undefined; };
+    this.cleanup = () => { if (TikzRendererView.activeViews.get(stateKey) === this) TikzRendererView.activeViews.delete(stateKey); doc.removeEventListener("pointerdown", outsidePointerDown, true); doc.removeEventListener("keydown", escape, true); menu.removeEventListener("pointerdown", togglePanel); viewport.removeEventListener("wheel", wheel, true); win?.removeEventListener("scroll", reposition, true); win?.removeEventListener("resize", reposition); observer.disconnect(); resizeObserver.disconnect(); closePanel(); panel.remove(); TikzRendererView.allViews.delete(this); this.applyExternalState = undefined; this.cleanup = undefined; };
   }
   onunload(): void { this.cleanup?.(); this.containerEl.empty(); }
   dispose(emptyContainer = true): void { this.cleanup?.(); if (emptyContainer && this.containerEl.isConnected) this.containerEl.empty(); }
