@@ -51,8 +51,9 @@ const renderChecks = [
   ["-F", "svg", "explicit SVG conversion format"],
   ["text=path,no-reuse-images", "stable MuPDF SVG text paths"],
   ["main-1.svg", "single-page SVG filename fallback"],
-  ["dvipdfmx", "DVI/XDV PDF fallback"],
-  ["PIPELINE_VERSION = \"15-robust-svg-conversion\"", "SVG conversion cache invalidation"],
+  ["xdvipdfmx", "XeLaTeX XDV to PDF fallback"],
+  ["dvipdfmx", "LaTeX DVI to PDF fallback"],
+  ["PIPELINE_VERSION = \"16-xdv-via-xdvipdfmx-centered-fit\"", "SVG conversion cache invalidation"],
 ];
 for (const [needle, label] of renderChecks) {
   if (!render.includes(needle)) throw new Error("Missing render invariant: " + label);
