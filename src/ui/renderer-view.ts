@@ -5,7 +5,7 @@ import { ExportService } from "../core/export-service";
 import { TikzHistoryStore } from "../core/history";
 import { DisplayTheme, TikzSettings } from "../settings/settings";
 
-type TikzViewState = { zoom: number; panX: number; panY: number; viewportHeight: number };
+type TikzViewState = { zoom: number; panX: number; panY: number; viewportWidth: number; viewportHeight: number };
 type TikzThemeState = { displayTheme: DisplayTheme; customBackgroundColor: string; customBackgroundOpacity: number };
 
 export class TikzRendererView extends MarkdownRenderChild {
@@ -44,15 +44,17 @@ export class TikzRendererView extends MarkdownRenderChild {
     const persistedTheme = TikzRendererView.themeStates.get(stateKey) ?? loadThemeState(stateKey);
     const themeState: TikzThemeState = persistedTheme ?? { displayTheme: settings.displayTheme, customBackgroundColor: settings.customBackgroundColor, customBackgroundOpacity: settings.customBackgroundOpacity };
     TikzRendererView.themeStates.set(stateKey, themeState);
-    const initialEditState: TikzViewState = persisted ?? { zoom: clampZoom(settings.defaultZoom / 100), panX: 0, panY: 0, viewportHeight: 0 };
+    const initialEditState: TikzViewState = persisted ?? { zoom: clampZoom(settings.defaultZoom / 100), panX: 0, panY: 0, viewportWidth: 0, viewportHeight: 0 };
     TikzRendererView.viewStates.set(stateKey, initialEditState);
-    let zoom = initialEditState.zoom, panX = initialEditState.panX, panY = initialEditState.panY, naturalWidth = 0, naturalHeight = 0, viewportHeight = initialEditState.viewportHeight, dragging = false, lastX = 0, lastY = 0;
+    let zoom = initialEditState.zoom, panX = initialEditState.panX, panY = initialEditState.panY, naturalWidth = 0, naturalHeight = 0, viewportWidth = initialEditState.viewportWidth, viewportHeight = initialEditState.viewportHeight, dragging = false, lastX = 0, lastY = 0;
     let readingMode = false;
-    let readingAutoFit = false;
     const isReadingMode = (): boolean => !!shell.closest(".markdown-preview-view");
     const closePanel = (): void => { panel.hidden = true; menu.setAttribute("aria-expanded", "false"); menu.removeAttribute("data-open"); };
 
-    const getViewportWidth = (): number => Math.max(1, Math.round(shell.clientWidth || this.containerEl.clientWidth || viewport.getBoundingClientRect().width || naturalWidth));
+    const getViewportWidth = (): number => {
+      if (isReadingMode() && viewportWidth > 0) return Math.max(1, Math.round(viewportWidth));
+      return Math.max(1, Math.round(shell.clientWidth || this.containerEl.clientWidth || viewport.getBoundingClientRect().width || naturalWidth));
+    };
     const getViewportHeight = (): number => Math.max(1, Math.round(viewport.clientHeight || viewportHeight || naturalHeight * zoom || 1));
     const syncViewportGeometry = (): void => {
       viewport.style.width = `${getViewportWidth()}px`;
@@ -91,29 +93,21 @@ export class TikzRendererView extends MarkdownRenderChild {
       viewport.classList.toggle("is-pannable", zoom > 1 || isReadingMode()); viewport.style.touchAction = "none";
     };
     const syncSharedState = (): boolean => { const shared = TikzRendererView.viewStates.get(stateKey); if (!shared) return false; const changed = zoom !== shared.zoom || panX !== shared.panX || panY !== shared.panY || viewportHeight !== shared.viewportHeight; if (changed) applyLocalViewState(shared); return changed; };
-    const enterReadingLayout = (): void => {
-      if (!ensureIntrinsicSize()) return;
-      const width = getViewportWidth();
-      const availableWidth = Math.max(1, width);
-      const fitZoom = naturalWidth > 0 ? availableWidth / naturalWidth : 1;
-      zoom = clampZoom(Math.min(settings.defaultZoom / 100, fitZoom));
-      panX = 0;
-      panY = 0;
-      viewportHeight = clampViewportHeight(naturalHeight * zoom);
-      readingAutoFit = true;
-    };
     const updateMode = (): boolean => {
       const nextReadingMode = isReadingMode();
       const changedMode = nextReadingMode !== readingMode;
-      if (changedMode) {
-        if (nextReadingMode) enterReadingLayout();
-        else {
-          const shared = TikzRendererView.viewStates.get(stateKey) ?? initialEditState;
-          applyLocalViewState(shared);
-          readingAutoFit = false;
-        }
+      if (changedMode && nextReadingMode) {
+        // Reading mode is a display of the exact geometry configured in Write mode.
+        // Never auto-fit or create a second independent layout here.
+        const shared = TikzRendererView.viewStates.get(stateKey) ?? loadViewState(stateKey) ?? initialEditState;
+        TikzRendererView.viewStates.set(stateKey, shared);
+        applyLocalViewState(shared);
         dragging = false;
       } else if (!nextReadingMode) {
+        const shared = TikzRendererView.viewStates.get(stateKey) ?? initialEditState;
+        applyLocalViewState(shared);
+        dragging = false;
+      } else {
         syncSharedState();
       }
       readingMode = nextReadingMode;
@@ -122,7 +116,7 @@ export class TikzRendererView extends MarkdownRenderChild {
       if (nextReadingMode) closePanel();
       return changedMode;
     };
-    const persistEditViewState = (): void => { if (isReadingMode()) return; clampCurrentPan(); const state = { zoom, panX, panY, viewportHeight: clampViewportHeight(viewportHeight) }; TikzRendererView.viewStates.set(stateKey, state); saveViewState(stateKey, state); for (const view of TikzRendererView.allViews) { if (view !== this && view.sharedStateKey === stateKey) view.applyExternalState?.(state); } };
+    const persistEditViewState = (): void => { if (isReadingMode()) return; clampCurrentPan(); viewportWidth = getViewportWidth(); const state = { zoom, panX, panY, viewportWidth, viewportHeight: clampViewportHeight(viewportHeight) }; TikzRendererView.viewStates.set(stateKey, state); saveViewState(stateKey, state); for (const view of TikzRendererView.allViews) { if (view !== this && view.sharedStateKey === stateKey) view.applyExternalState?.(state); } };
     const positionPanel = (): void => { if (panel.hidden || !shell.isConnected || isReadingMode()) return; const b = menu.getBoundingClientRect(); const vw = win?.innerWidth ?? doc.documentElement.clientWidth; const vh = win?.innerHeight ?? doc.documentElement.clientHeight; const width = Math.min(270, Math.max(230, vw - 16)); panel.style.width = `${width}px`; const r = panel.getBoundingClientRect(); let left = b.left; let top = b.bottom + 6; if (left + r.width > vw - 8) left = Math.max(8, vw - r.width - 8); if (left < 8) left = 8; if (top + r.height > vh - 8) top = b.top - r.height - 6; if (top < 8) top = 8; panel.style.left = `${Math.round(left)}px`; panel.style.top = `${Math.round(top)}px`; };
     const applyTheme = (): void => { const theme = themeState.displayTheme === "auto" ? detectTheme(doc) : themeState.displayTheme; shell.dataset.theme = theme; if (theme === "custom") { shell.style.setProperty("--tikz-custom-bg", themeState.customBackgroundColor); shell.style.setProperty("--tikz-custom-bg-opacity", `${themeState.customBackgroundOpacity / 100}`); } else { shell.style.removeProperty("--tikz-custom-bg"); shell.style.removeProperty("--tikz-custom-bg-opacity"); } };
     const persistTheme = (): void => { TikzRendererView.themeStates.set(stateKey, { ...themeState }); saveThemeState(stateKey, themeState); applyTheme(); };
@@ -151,13 +145,12 @@ export class TikzRendererView extends MarkdownRenderChild {
     const outsidePointerDown = (e: PointerEvent): void => { if (!panel.hidden && (!(e.target instanceof Node) || (!shell.contains(e.target) && !panel.contains(e.target)))) closePanel(); }; doc.addEventListener("pointerdown", outsidePointerDown, true);
     const escape = (e: KeyboardEvent): void => { if (e.key === "Escape" && !panel.hidden) { closePanel(); menu.focus(); } }; doc.addEventListener("keydown", escape, true);
     svg.addEventListener("click", e => { e.preventDefault(); e.stopPropagation(); });
-    viewport.addEventListener("pointerdown", e => { if (e.button !== 0 || (!isReadingMode() && zoom <= 1)) return; if (isReadingMode()) readingAutoFit = false; dragging = true; lastX = e.clientX; lastY = e.clientY; viewport.setPointerCapture(e.pointerId); e.preventDefault(); e.stopPropagation(); });
+    viewport.addEventListener("pointerdown", e => { if (e.button !== 0 || (!isReadingMode() && zoom <= 1)) return; if (isReadingMode()) { /* Read mode uses the shared Write geometry; do not mutate the shared state. */ } dragging = true; lastX = e.clientX; lastY = e.clientY; viewport.setPointerCapture(e.pointerId); e.preventDefault(); e.stopPropagation(); });
     viewport.addEventListener("pointermove", e => { if (!dragging) return; panX += e.clientX - lastX; panY += e.clientY - lastY; lastX = e.clientX; lastY = e.clientY; clampCurrentPan(); applySvgTransform(); e.preventDefault(); e.stopPropagation(); });
     const stopDragging = (): void => { if (!dragging) return; dragging = false; clampCurrentPan(); if (!isReadingMode()) persistEditViewState(); viewport.classList.remove("is-dragging"); };
     viewport.addEventListener("pointerup", stopDragging); viewport.addEventListener("pointercancel", stopDragging); viewport.addEventListener("lostpointercapture", stopDragging);
     const wheel = (e: WheelEvent): void => {
       const reading = isReadingMode();
-      if (reading) readingAutoFit = false;
       if (!shell.isConnected) return;
       const target = e.target;
       if (!(target instanceof Node) || !viewport.contains(target)) return;
@@ -202,18 +195,20 @@ export class TikzRendererView extends MarkdownRenderChild {
     win?.addEventListener("wheel", wheel, { passive: false, capture: true });
     const observer = new MutationObserver(() => { const changed = updateMode(); if (changed) applyZoom(); else { applyTheme(); positionPanel(); } }); observer.observe(doc.body, { attributes: true, attributeFilter: ["class"] });
     const resizeObserver = new ResizeObserver(() => {
-      if (isReadingMode() && readingAutoFit && ensureIntrinsicSize()) {
-        const width = getViewportWidth();
-        const fitZoom = naturalWidth > 0 ? width / naturalWidth : 1;
-        zoom = clampZoom(Math.min(settings.defaultZoom / 100, fitZoom));
-        panX = 0;
-        panY = 0;
-        viewportHeight = clampViewportHeight(naturalHeight * zoom);
-        applyZoom();
+      if (!isReadingMode()) {
+        // Width is part of the Write-mode geometry. Persist it so Read mode can
+        // reproduce the same page/viewport size instead of inventing its own.
+        ensureViewportSize();
+        persistEditViewState();
+        positionPanel();
         return;
       }
-      ensureViewportSize();
-      clampCurrentPan();
+      const shared = TikzRendererView.viewStates.get(stateKey);
+      if (shared) {
+        applyLocalViewState(shared);
+      } else {
+        ensureViewportSize();
+      }
       positionPanel();
     });
     resizeObserver.observe(viewport);
@@ -262,7 +257,7 @@ function clampViewportHeight(value: number): number { return Math.min(1600, Math
 function clampNumber(value: number, min: number, max: number): number { return Math.min(max, Math.max(min, value)); }
 function viewStorageKey(key: string): string { return `obsidian-tikz-renderer:view:${key}`; }
 function themeStorageKey(key: string): string { return `obsidian-tikz-renderer:theme:${key}`; }
-function loadViewState(key: string): TikzViewState | undefined { try { const raw = window.localStorage.getItem(viewStorageKey(key)); if (!raw) return undefined; const p = JSON.parse(raw) as Partial<TikzViewState>; if (!Number.isFinite(p.zoom) || !Number.isFinite(p.panX) || !Number.isFinite(p.panY)) return undefined; return { zoom: clampZoom(Number(p.zoom)), panX: Number(p.panX), panY: Number(p.panY), viewportHeight: Number.isFinite(p.viewportHeight) ? clampViewportHeight(Number(p.viewportHeight)) : 0 }; } catch { return undefined; } }
+function loadViewState(key: string): TikzViewState | undefined { try { const raw = window.localStorage.getItem(viewStorageKey(key)); if (!raw) return undefined; const p = JSON.parse(raw) as Partial<TikzViewState>; if (!Number.isFinite(p.zoom) || !Number.isFinite(p.panX) || !Number.isFinite(p.panY)) return undefined; return { zoom: clampZoom(Number(p.zoom)), panX: Number(p.panX), panY: Number(p.panY), viewportWidth: Number.isFinite(p.viewportWidth) ? Math.max(1, Number(p.viewportWidth)) : 0, viewportHeight: Number.isFinite(p.viewportHeight) ? clampViewportHeight(Number(p.viewportHeight)) : 0 }; } catch { return undefined; } }
 function saveViewState(key: string, state: TikzViewState): void { try { window.localStorage.setItem(viewStorageKey(key), JSON.stringify(state)); } catch { /* storage may be unavailable */ } }
 function loadThemeState(key: string): TikzThemeState | undefined { try { const raw = window.localStorage.getItem(themeStorageKey(key)); if (!raw) return undefined; const p = JSON.parse(raw) as Partial<TikzThemeState>; if (typeof p.displayTheme !== "string" || typeof p.customBackgroundColor !== "string" || !Number.isFinite(p.customBackgroundOpacity)) return undefined; return { displayTheme: p.displayTheme as DisplayTheme, customBackgroundColor: p.customBackgroundColor, customBackgroundOpacity: Math.min(100, Math.max(10, Number(p.customBackgroundOpacity))) }; } catch { return undefined; } }
 function saveThemeState(key: string, state: TikzThemeState): void { try { window.localStorage.setItem(themeStorageKey(key), JSON.stringify(state)); } catch { /* storage may be unavailable */ } }
