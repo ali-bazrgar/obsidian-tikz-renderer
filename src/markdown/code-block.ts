@@ -1,4 +1,4 @@
-import { App, MarkdownPostProcessorContext, MarkdownSectionInformation, Notice, TFile } from "obsidian";
+import { App, MarkdownPostProcessorContext, MarkdownSectionInformation, Modal, Notice, TFile } from "obsidian";
 import { createHash } from "node:crypto";
 import { BlockKind } from "../core/types";
 import { RenderService } from "../core/render-service";
@@ -23,13 +23,14 @@ export class TikzMarkdownProcessor {
       const result = await service.render(source, kind, ctx.sourcePath);
       if (!el.isConnected) return;
       if (result.warning) new Notice(result.warning, 6000);
-      result.assetPath = await exportService.saveSvg(result.svg, result.hash, ctx.sourcePath, false);
-      if (section) await ensureSourceAssetLinks(app, ctx.sourcePath, section, result.assetPath, historyKey, kind);
+      const createLink = await confirmAssetLink(app, kind);
+      result.assetPath = createLink ? await exportService.saveSvg(result.svg, result.hash, ctx.sourcePath, false) : undefined;
+      if (section) await ensureSourceAssetLinks(app, ctx.sourcePath, section, result.assetPath ?? "", historyKey, kind);
       const edit = async (): Promise<void> => replaceSource(app, ctx, el, kind, source);
       const view = new TikzRendererView(app, exportService, host, result, source, ctx.sourcePath, service, kind, history, historyKey, async nextSource => replaceSource(app, ctx, el, kind, nextSource), getSettings, saveSettings);
       ctx.addChild(view);
       view.render();
-      scheduleGeneratedLinks(el, result.assetPath, historyKey, edit);
+      scheduleGeneratedLinks(el, result.assetPath ?? "", historyKey, edit);
     } catch (error) {
       if (!el.isConnected) return;
       host.empty();
@@ -81,7 +82,7 @@ function markGeneratedLinks(el: HTMLElement, assetPath: string, historyKey: stri
 
 async function ensureSourceAssetLinks(app: App, sourcePath: string, section: MarkdownSectionInformation, assetPath: string, historyKey: string, kind: BlockKind): Promise<void> {
   const file = app.vault.getFileByPath(sourcePath);
-  if (!(file instanceof TFile) || !assetPath) return;
+  if (!(file instanceof TFile)) return;
   const wikilink = `[[${assetPath}]]`;
   await app.vault.process(file, data => {
     const eol = data.includes("\r\n") ? "\r\n" : "\n";
@@ -119,9 +120,40 @@ async function ensureSourceAssetLinks(app: App, sourcePath: string, section: Mar
       break;
     }
 
-    lines.splice(insertAt, 0, wikilink);
+    if (assetPath) lines.splice(insertAt, 0, wikilink);
     return lines.join(eol);
   });
+}
+
+class AssetLinkConfirmModal extends Modal {
+  private resolved = false;
+
+  constructor(app: App, private readonly kind: BlockKind, private readonly onResult: (create: boolean) => void) { super(app); }
+
+  onOpen(): void {
+    this.titleEl.setText("Create SVG link?");
+    this.contentEl.empty();
+    this.contentEl.createEl("p", { text: `Create an SVG file and add its link to this ${this.kind} block?` });
+    const actions = this.contentEl.createDiv({ cls: "tikz-asset-link-actions" });
+    actions.createEl("button", { text: "Create link", attr: { type: "button" } }).addEventListener("click", () => this.finish(true));
+    actions.createEl("button", { text: "No link", attr: { type: "button" } }).addEventListener("click", () => this.finish(false));
+  }
+
+  onClose(): void {
+    if (!this.resolved) this.onResult(false);
+    this.contentEl.empty();
+  }
+
+  private finish(create: boolean): void {
+    if (this.resolved) return;
+    this.resolved = true;
+    this.onResult(create);
+    this.close();
+  }
+}
+
+function confirmAssetLink(app: App, kind: BlockKind): Promise<boolean> {
+  return new Promise(resolve => new AssetLinkConfirmModal(app, kind, resolve).open());
 }
 
 function makeHistoryKey(ctx: MarkdownPostProcessorContext, section: MarkdownSectionInformation | null, kind: BlockKind, source: string): string {
