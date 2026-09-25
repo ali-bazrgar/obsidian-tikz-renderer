@@ -30,7 +30,7 @@ export class TikzMarkdownProcessor {
       const view = new TikzRendererView(app, exportService, host, result, source, ctx.sourcePath, service, kind, history, historyKey, async nextSource => replaceSource(app, ctx, el, kind, nextSource), getSettings, saveSettings);
       ctx.addChild(view);
       view.render();
-      scheduleGeneratedLinks(el, result.assetPath, historyKey, edit);
+      scheduleGeneratedLinks(el, result.assetPath ?? "", historyKey, edit);
     } catch (error) {
       if (!el.isConnected) return;
       host.empty();
